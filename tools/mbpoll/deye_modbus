@@ -1,0 +1,4 @@
+P=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACB127910-if00
+M="mbpoll -m rtu -b 9600 -P none -a 2 -t 4 -0 -1 -o 1"
+
+$M -r 588 -c 1 $P

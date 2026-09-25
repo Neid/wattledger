@@ -1,0 +1,9 @@
+P=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACC023644-if00
+M="mbpoll -m rtu -b 9600 -P none -a 1 -t 4:float -B -0 -1 -o 1"
+
+$M -r 8198 -c 3 $P    # Ua, Ub, Uc      (×0.1 V)
+$M -r 8204 -c 3 $P    # Ia, Ib, Ic      (×0.001 A)
+$M -r 8210 -c 4 $P    # Pt, Pa, Pb, Pc  (×0.1 W)
+$M -r 16414 -c 1 $P   # imported energy (kWh)
+$M -r 16424 -c 1 $P   # exported energy (kWh)
+

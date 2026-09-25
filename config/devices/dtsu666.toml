@@ -1,0 +1,280 @@
+# Chint DTSU666 three-phase meter, standalone on its own RS485 bus.
+#
+# All values are IEEE754 float32, high word first. Addresses are 0-based.
+# The meter reports voltage, current and power in fixed-point units inside the
+# float (e.g. 2226.0 = 222.6 V), hence the scales below.
+#
+# Keys become MQTT unique_ids ("dtsu_<key>") and Domoticz database keys:
+# never rename a key once it has been published.
+#
+# Domoticz pairs each kWh sensor with the W sensor of the same device whose
+# unique_id shares the longest prefix with it, so each energy key
+# "<x>_energy" has a matching "<x>_power". Per-phase keys start with the
+# phase ("l1_...") so they never compete for that pairing.
+
+[device]
+id = "dtsu"
+name = "Grid meter DTSU666"
+manufacturer = "Chint"
+model = "DTSU666"
+word_order = "high_first"
+blocks = [
+    [8192, 26],  # 0x2000: Uab Ubc Uca Ua Ub Uc Ia Ib Ic Pt Pa Pb Pc
+    [8234, 8],   # 0x202A: PFt PFa PFb PFc (unverified)
+    [16414, 12], # 0x401E: energy counters
+]
+
+# ---- voltages (x0.1 V) ------------------------------------------------------
+
+[[register]]
+key = "l1_l2_voltage"
+name = "Voltage L1-L2"
+address = 8192
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 500]
+verified = true
+
+[[register]]
+key = "l2_l3_voltage"
+name = "Voltage L2-L3"
+address = 8194
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 500]
+verified = true
+
+[[register]]
+key = "l3_l1_voltage"
+name = "Voltage L3-L1"
+address = 8196
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 500]
+verified = true
+
+[[register]]
+key = "l1_voltage"
+name = "Voltage L1"
+address = 8198
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+verified = true
+
+[[register]]
+key = "l2_voltage"
+name = "Voltage L2"
+address = 8200
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+verified = true
+
+[[register]]
+key = "l3_voltage"
+name = "Voltage L3"
+address = 8202
+type = "f32"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+verified = true
+
+# ---- currents (x0.001 A) ----------------------------------------------------
+# Range allows negative values in case the meter signs current by direction.
+
+[[register]]
+key = "l1_current"
+name = "Current L1"
+address = 8204
+type = "f32"
+scale = 0.001
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [-100, 100]
+verified = true
+
+[[register]]
+key = "l2_current"
+name = "Current L2"
+address = 8206
+type = "f32"
+scale = 0.001
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [-100, 100]
+verified = true
+
+[[register]]
+key = "l3_current"
+name = "Current L3"
+address = 8208
+type = "f32"
+scale = 0.001
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [-100, 100]
+verified = true
+
+# ---- active power (x0.1 W) --------------------------------------------------
+# Sign: positive at night with no PV, so positive = import. Confirm on the
+# first export; if wrong, swap positive_part/negative_part below.
+
+[[register]]
+key = "grid_power"
+name = "Grid power (+import / -export)"
+address = 8210
+type = "f32"
+scale = 0.1
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-50000, 50000]
+precision = 0
+verified = true
+
+[[register]]
+key = "l1_power"
+name = "Power L1"
+address = 8212
+type = "f32"
+scale = 0.1
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-20000, 20000]
+precision = 0
+verified = true
+
+[[register]]
+key = "l2_power"
+name = "Power L2"
+address = 8214
+type = "f32"
+scale = 0.1
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-20000, 20000]
+precision = 0
+verified = true
+
+[[register]]
+key = "l3_power"
+name = "Power L3"
+address = 8216
+type = "f32"
+scale = 0.1
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-20000, 20000]
+precision = 0
+verified = true
+
+# ---- power factor (x0.001), not yet verified ---------------------------------
+
+[[register]]
+key = "power_factor"
+name = "Power factor"
+address = 8234
+type = "f32"
+scale = 0.001
+device_class = "power_factor"
+state_class = "measurement"
+range = [-1, 1]
+
+[[register]]
+key = "l1_power_factor"
+name = "Power factor L1"
+address = 8236
+type = "f32"
+scale = 0.001
+device_class = "power_factor"
+state_class = "measurement"
+range = [-1, 1]
+
+[[register]]
+key = "l2_power_factor"
+name = "Power factor L2"
+address = 8238
+type = "f32"
+scale = 0.001
+device_class = "power_factor"
+state_class = "measurement"
+range = [-1, 1]
+
+[[register]]
+key = "l3_power_factor"
+name = "Power factor L3"
+address = 8240
+type = "f32"
+scale = 0.001
+device_class = "power_factor"
+state_class = "measurement"
+range = [-1, 1]
+
+# ---- energy counters (kWh, no scaling) ----------------------------------------
+
+[[register]]
+key = "grid_import_energy"
+name = "Grid import energy"
+address = 16414
+type = "f32"
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+verified = true
+
+[[register]]
+key = "grid_export_energy"
+name = "Grid export energy"
+address = 16424
+type = "f32"
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+verified = true
+
+# ---- derived: split the signed power for the Domoticz kWh meters -------------
+
+[[derived]]
+key = "grid_import_power"
+name = "Grid import power"
+op = "positive_part"
+inputs = ["grid_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
+[[derived]]
+key = "grid_export_power"
+name = "Grid export power"
+op = "negative_part"
+inputs = ["grid_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"

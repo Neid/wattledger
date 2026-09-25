@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/registers", "crates/modbus-bridge"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+registers = { path = "crates/registers" }
+
+anyhow = "1.0"
+humantime = "2.1"
+humantime-serde = "1.1"
+lexopt = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi"] }
+
+# Async runtime: current-thread only; two serial buses and one MQTT connection
+# do not need a thread pool, and the Pi has 2 GB of RAM to share.
+tokio = { version = "1.47", features = ["rt", "macros", "time", "sync", "signal", "io-util"] }
+# Without default features to avoid libudev (only needed for port enumeration),
+# which keeps the build fully static and cross-compilable.
+tokio-serial = { version = "5.4", default-features = false }
+# TLS is not needed for a broker on localhost.
+rumqttc = { version = "0.25", default-features = false }
+# Blocking and tiny; runs on the blocking pool for plain-HTTP line protocol writes.
+ureq = { version = "3.1", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+# systemd restarts the service; unwinding tables would only cost size.
+panic = "abort"

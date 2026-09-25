@@ -1,0 +1,42 @@
+[Unit]
+Description=wattledger Modbus bridge (read-only: Deye + DTSU666 -> MQTT, VictoriaMetrics)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/modbus-bridge --config /etc/wattledger/bridge.toml
+Environment=WATTLEDGER_LOG=info
+Restart=always
+RestartSec=5
+# The bridge publishes "offline" and flushes the line buffer on SIGTERM.
+TimeoutStopSec=15
+
+# Unprivileged throwaway user with access to the USB-RS485 adapters only.
+DynamicUser=yes
+SupplementaryGroups=dialout
+DevicePolicy=closed
+DeviceAllow=char-ttyACM rw
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+# Normal usage is a few MB; this only stops a runaway process.
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

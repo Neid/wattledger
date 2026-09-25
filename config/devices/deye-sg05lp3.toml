@@ -1,0 +1,442 @@
+# Deye SUN-10K-SG05LP3-EU-SM2 hybrid inverter (low-voltage battery, 3 phase).
+#
+# u16 registers, 0-based addresses. 32-bit counters are LOW word first.
+# Temperatures are (s16 - 1000) x 0.1 °C, i.e. scale 0.1, offset -100.
+#
+# Only battery_soc has been checked against the device so far. Everything else
+# comes from the ha-solarman map for SUN-SG04LP3 (same protocol family) and is
+# marked unverified: it is shown by --dry-run and written to the time-series
+# database, but not published to MQTT until you set `verified = true` after
+# comparing it with the inverter display.
+#
+# Keys become MQTT unique_ids ("deye_<key>") and Domoticz database keys:
+# never rename a key once it has been published. Energy/power pairs follow
+# "<x>_energy" / "<x>_power"; per-phase keys start with the phase so they do
+# not compete for Domoticz's kWh/W pairing.
+
+[device]
+id = "deye"
+name = "Inverter Deye SUN-10K"
+manufacturer = "Deye"
+model = "SUN-10K-SG05LP3-EU-SM2"
+word_order = "low_first"
+blocks = [
+    [514, 28], # 514..541: energy counters, temperatures
+    [586, 6],  # 586..591: battery
+    [598, 38], # 598..635: grid, inverter output
+    [644, 10], # 644..653: load
+    [661, 19], # 661..679: GEN port, PV
+]
+
+# ---- energy counters (u32 x0.1 kWh) -------------------------------------------
+
+[[register]]
+key = "battery_charge_energy"
+name = "Battery charged energy"
+address = 516
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+[[register]]
+key = "battery_discharge_energy"
+name = "Battery discharged energy"
+address = 518
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+[[register]]
+key = "grid_import_energy"
+name = "Grid bought energy (inverter)"
+address = 522
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+[[register]]
+key = "grid_export_energy"
+name = "Grid sold energy (inverter)"
+address = 524
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+[[register]]
+key = "load_energy"
+name = "Load energy"
+address = 527
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+# Resets at midnight, so it is a plain total, not total_increasing, and kept
+# out of MQTT: Domoticz derives daily values from pv_energy itself.
+[[register]]
+key = "pv_today_energy"
+name = "PV energy today"
+address = 529
+type = "u16"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total"
+range = [0, 200]
+mqtt = false
+
+[[register]]
+key = "pv_energy"
+name = "PV energy"
+address = 534
+type = "u32"
+scale = 0.1
+unit = "kWh"
+device_class = "energy"
+state_class = "total_increasing"
+range = [0, 10000000]
+
+# ---- inverter temperatures ---------------------------------------------------
+
+[[register]]
+key = "dc_temperature"
+name = "DC temperature"
+address = 540
+type = "s16"
+scale = 0.1
+offset = -100
+unit = "°C"
+device_class = "temperature"
+state_class = "measurement"
+range = [-30, 110]
+
+[[register]]
+key = "ac_temperature"
+name = "AC temperature"
+address = 541
+type = "s16"
+scale = 0.1
+offset = -100
+unit = "°C"
+device_class = "temperature"
+state_class = "measurement"
+range = [-30, 110]
+
+# ---- battery -----------------------------------------------------------------
+
+[[register]]
+key = "battery_temperature"
+name = "Battery temperature"
+address = 586
+type = "s16"
+scale = 0.1
+offset = -100
+unit = "°C"
+device_class = "temperature"
+state_class = "measurement"
+range = [-30, 80]
+
+[[register]]
+key = "battery_voltage"
+name = "Battery voltage"
+address = 587
+type = "u16"
+scale = 0.01
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [30, 65]
+
+[[register]]
+key = "battery_soc"
+name = "Battery SOC"
+address = 588
+type = "u16"
+unit = "%"
+device_class = "battery"
+state_class = "measurement"
+range = [0, 100]
+verified = true
+
+# + discharge / - charge
+[[register]]
+key = "battery_power"
+name = "Battery power (+discharge / -charge)"
+address = 590
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-15000, 15000]
+
+[[register]]
+key = "battery_current"
+name = "Battery current"
+address = 591
+type = "s16"
+scale = 0.01
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [-300, 300]
+
+# ---- grid as seen by the inverter ----------------------------------------------
+
+[[register]]
+key = "l1_grid_voltage"
+name = "Grid voltage L1"
+address = 598
+type = "u16"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+
+[[register]]
+key = "l2_grid_voltage"
+name = "Grid voltage L2"
+address = 599
+type = "u16"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+
+[[register]]
+key = "l3_grid_voltage"
+name = "Grid voltage L3"
+address = 600
+type = "u16"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 300]
+
+# Sign convention not confirmed; assumed + import / - export.
+[[register]]
+key = "grid_power"
+name = "Grid power (inverter)"
+address = 625
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-25000, 25000]
+
+# ---- inverter output -------------------------------------------------------------
+
+[[register]]
+key = "l1_inverter_power"
+name = "Inverter power L1"
+address = 633
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-10000, 10000]
+
+[[register]]
+key = "l2_inverter_power"
+name = "Inverter power L2"
+address = 634
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-10000, 10000]
+
+[[register]]
+key = "l3_inverter_power"
+name = "Inverter power L3"
+address = 635
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-10000, 10000]
+
+# ---- load ---------------------------------------------------------------------
+# Read as s16 so a stray negative value is rejected by the range instead of
+# showing up as ~65 kW.
+
+[[register]]
+key = "l1_load_power"
+name = "Load power L1"
+address = 650
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-500, 15000]
+
+[[register]]
+key = "l2_load_power"
+name = "Load power L2"
+address = 651
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-500, 15000]
+
+[[register]]
+key = "l3_load_power"
+name = "Load power L3"
+address = 652
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-500, 15000]
+
+[[register]]
+key = "load_power"
+name = "Load power"
+address = 653
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-1000, 30000]
+
+# ---- GEN / SmartLoad port (least certain) ------------------------------------------
+
+[[register]]
+key = "gen_power"
+name = "GEN port power"
+address = 667
+type = "s16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [-15000, 15000]
+
+# ---- PV -----------------------------------------------------------------------------
+
+[[register]]
+key = "pv1_power"
+name = "PV1 power"
+address = 672
+type = "u16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [0, 10000]
+
+[[register]]
+key = "pv2_power"
+name = "PV2 power"
+address = 673
+type = "u16"
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+range = [0, 10000]
+
+[[register]]
+key = "pv1_voltage"
+name = "PV1 voltage"
+address = 676
+type = "u16"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 600]
+
+[[register]]
+key = "pv1_current"
+name = "PV1 current"
+address = 677
+type = "u16"
+scale = 0.1
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [0, 30]
+
+[[register]]
+key = "pv2_voltage"
+name = "PV2 voltage"
+address = 678
+type = "u16"
+scale = 0.1
+unit = "V"
+device_class = "voltage"
+state_class = "measurement"
+range = [0, 600]
+
+[[register]]
+key = "pv2_current"
+name = "PV2 current"
+address = 679
+type = "u16"
+scale = 0.1
+unit = "A"
+device_class = "current"
+state_class = "measurement"
+range = [0, 30]
+
+# ---- derived --------------------------------------------------------------------------
+
+[[derived]]
+key = "pv_power"
+name = "PV power"
+op = "sum"
+inputs = ["pv1_power", "pv2_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
+[[derived]]
+key = "battery_charge_power"
+name = "Battery charge power"
+op = "negative_part"
+inputs = ["battery_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
+[[derived]]
+key = "battery_discharge_power"
+name = "Battery discharge power"
+op = "positive_part"
+inputs = ["battery_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
+[[derived]]
+key = "grid_import_power"
+name = "Grid import power (inverter)"
+op = "positive_part"
+inputs = ["grid_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
+[[derived]]
+key = "grid_export_power"
+name = "Grid export power (inverter)"
+op = "negative_part"
+inputs = ["grid_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
