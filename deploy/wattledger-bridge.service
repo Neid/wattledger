@@ -1,6 +1,6 @@
 [Unit]
 Description=wattledger Modbus bridge (read-only: Deye + DTSU666 -> MQTT, VictoriaMetrics)
-After=network-online.target mosquitto.service
+After=network-online.target mosquitto.service victoriametrics.service
 Wants=network-online.target
 
 [Service]

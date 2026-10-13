@@ -77,7 +77,10 @@ crates/
     src/bus.rs                per-bus polling task
     src/reading.rs            Reading + non-blocking fan-out
     src/sinks/                mqtt + HA discovery, influx line protocol, stdout
-deploy/wattledger-bridge.service
+deploy/
+  deploy.sh                   build machine: build, copy to the Pi, update + restart
+  install.sh                  on the Pi: Mosquitto, VictoriaMetrics, bridge, services
+  wattledger-bridge.service   systemd unit
 tools/mbpoll/                 the mbpoll commands used to verify registers
 ```
 
@@ -146,8 +149,9 @@ verified with mbpoll, except for power factor.
    code is non-zero if any block failed.
 3. Compare the values with the inverter display (and with mbpoll if needed:
    `tools/mbpoll/`).
-4. Set `verified = true` for each register that matches, then restart the
-   service.
+4. Set `verified = true` for each register that matches, in the repository's
+   `config/devices/*.toml`, then run `deploy/deploy.sh`. It syncs the config
+   and restarts the service.
 
 Unverified sensors go to the database but not to MQTT, so Domoticz never gets
 devices it would later need cleaning up. `mqtt.publish_unverified = true`
@@ -235,28 +239,80 @@ prefer Docker.)
 
 ## Deployment
 
+Two scripts in `deploy/` handle deployment. The repository's `config/` is the
+source of truth. Each deploy overwrites the matching files in
+`/etc/wattledger` on the Pi, so make config changes in the repository, not on
+the Pi.
+
+| Script | Runs on | Does |
+|---|---|---|
+| `deploy/deploy.sh [user@host]` | build machine | builds the aarch64 binary, copies it with `config/`, the unit and `install.sh` to `~/wattledger` on the Pi, then installs and restarts the bridge if it is already installed |
+| `sudo ~/wattledger/install.sh` | Pi | full install, safe to re-run (see below) |
+
+The host defaults to `$WATTLEDGER_PI`, or `pi@raspberrypi.local` if that is
+unset. `--no-build` skips `cargo build`. You need SSH access to the Pi and
+`rsync` on both machines. If sudo on the Pi asks for a password, `deploy.sh`
+prompts for it.
+
+### First install
+
 ```sh
-PI=pi@raspberrypi.local
-scp target/aarch64-unknown-linux-musl/release/modbus-bridge \
-    deploy/wattledger-bridge.service $PI:/tmp/
-scp -r config $PI:/tmp/wattledger-config
-
-ssh $PI '
-  sudo install -m 755 /tmp/modbus-bridge /usr/local/bin/modbus-bridge &&
-  sudo mkdir -p /etc/wattledger &&
-  sudo cp -rn /tmp/wattledger-config/. /etc/wattledger/ &&
-  sudo install -m 644 /tmp/wattledger-bridge.service /etc/systemd/system/ &&
-  sudo systemctl daemon-reload'
-
-# First check the readings by hand (the default "pi" user is in "dialout"):
-ssh $PI 'modbus-bridge -c /etc/wattledger/bridge.toml --once --dry-run'
-
-# Then enable the service:
-ssh $PI 'sudo systemctl enable --now wattledger-bridge'
-ssh $PI 'journalctl -u wattledger-bridge -f'
+deploy/deploy.sh pi@raspberrypi.local              # copies files; says the bridge isn't installed yet
+ssh -t pi@raspberrypi.local sudo ~/wattledger/install.sh
 ```
 
-`cp -n` keeps existing config files on the Pi when you redeploy. The unit runs
-the bridge under a dynamic unprivileged user with access to `ttyACM` devices
-only, and restarts it 5 s after any exit. Set `WATTLEDGER_LOG=debug` in the
-unit for more detail.
+`install.sh` must run on a 64-bit Raspberry Pi OS (aarch64). It:
+
+1. Installs `mosquitto`, `mosquitto-clients`, `rsync` and `curl` with apt,
+   plus `mbpoll` if apt has it, and enables Mosquitto.
+2. Installs **VictoriaMetrics** if it is missing. It takes the latest
+   `victoria-metrics-linux-arm64` release from GitHub and checks the tarball
+   against the release's SHA-256 checksums. The binary goes to
+   `/usr/local/bin/victoria-metrics-prod`, the data to
+   `/var/lib/victoria-metrics`, and it runs as `victoriametrics.service`
+   under a `victoriametrics` system user. An existing install is kept. Set
+   `VM_VERSION` to change it.
+3. Adds the invoking user to `dialout`, so `--dry-run` works by hand.
+4. Installs the bridge binary, syncs the config to `/etc/wattledger`,
+   installs `wattledger-bridge.service`, enables it and restarts it. It warns
+   if a configured serial port is missing, or if a port is not a `ttyACM`
+   device (the unit only allows `char-ttyACM`).
+
+Environment overrides (pass them through sudo, e.g.
+`sudo VM_RETENTION=10y ~/wattledger/install.sh`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VM_VERSION` | latest, only if not installed | VictoriaMetrics version to install or switch to, e.g. `v1.154.0` |
+| `VM_RETENTION` | `5y` | data retention; VictoriaMetrics' own default is only 1 month |
+| `VM_LISTEN` | `127.0.0.1:8428` | HTTP address. Set `:8428` to open vmui (`/vmui`) from other machines. There is no authentication. |
+
+Each run of `install.sh` rewrites `victoriametrics.service`, so pass the same
+overrides every time you run it.
+
+Domoticz is not installed by the script. In Domoticz, add the "MQTT Auto
+Discovery Client Gateway" hardware, pointed at `127.0.0.1:1883` with the
+discovery prefix `homeassistant`.
+
+### Checking readings by hand
+
+```sh
+ssh pi@raspberrypi.local
+sudo systemctl stop wattledger-bridge         # the serial ports are opened exclusively
+modbus-bridge -c /etc/wattledger/bridge.toml --once --dry-run
+sudo systemctl start wattledger-bridge
+```
+
+### Updates
+
+```sh
+deploy/deploy.sh                                   # build, copy, install, restart
+ssh pi@raspberrypi.local journalctl -u wattledger-bridge -f
+```
+
+Under the hood this runs `sudo ~/wattledger/install.sh --bridge-only`, which
+leaves packages and VictoriaMetrics alone.
+
+The unit runs the bridge under a dynamic unprivileged user with access to
+`ttyACM` devices only, and restarts it 5 s after any exit. Set
+`WATTLEDGER_LOG=debug` in the unit for more detail.
