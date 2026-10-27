@@ -126,6 +126,8 @@ fn derive(op: DerivedOp, mut inputs: impl Iterator<Item = Option<f64>>) -> Optio
         DerivedOp::Sum => inputs.try_fold(0.0, |acc, v| v.map(|v| acc + v)),
         DerivedOp::PositivePart => inputs.next().flatten().map(|v| v.max(0.0) + 0.0),
         DerivedOp::NegativePart => inputs.next().flatten().map(|v| (-v).max(0.0) + 0.0),
+        // + 0.0 turns -0.0 into 0.0.
+        DerivedOp::Negate => inputs.next().flatten().map(|v| -v + 0.0),
     }
 }
 
@@ -406,6 +408,14 @@ mod tests {
         );
         assert!(
             derive(DerivedOp::NegativePart, [Some(0.0)].into_iter())
+                .unwrap()
+                .is_sign_positive()
+        );
+        assert_eq!(derive(DerivedOp::Negate, [Some(-440.0)].into_iter()), Some(440.0));
+        assert_eq!(derive(DerivedOp::Negate, [Some(125.0)].into_iter()), Some(-125.0));
+        assert_eq!(derive(DerivedOp::Negate, [None].into_iter()), None);
+        assert!(
+            derive(DerivedOp::Negate, [Some(0.0)].into_iter())
                 .unwrap()
                 .is_sign_positive()
         );

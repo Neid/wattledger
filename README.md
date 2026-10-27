@@ -137,7 +137,7 @@ verified = false                    # default false; see "Verifying registers"
 [[derived]]                         # computed from sensors defined above it
 key = "battery_charge_power"
 name = "Battery charge power"
-op = "negative_part"                # sum | positive_part (max(x,0)) | negative_part (max(-x,0))
+op = "negative_part"                # sum | positive_part (max(x,0)) | negative_part (max(-x,0)) | negate (-x)
 inputs = ["battery_power"]
 unit = "W"
 device_class = "power"
@@ -224,6 +224,27 @@ of charge), plus today's totals. `deploy/deploy.sh` copies it to
 JSON API by their `unique_id`s, so it needs no idx numbers. Grid power comes
 from the DTSU666. Open the file directly with `?demo` to see it with made-up
 values.
+
+### Domoticz Energy Dashboard
+
+Domoticz has its own Energy Dashboard (Setup → Settings → Energy Dashboard).
+Assign:
+
+| Field | Device |
+|---|---|
+| P1/Grid | Grid meter DTSU666 (Grid import energy) |
+| Solar | Inverter Deye SUN-10K (PV energy) |
+| Battery | Inverter Deye SUN-10K (Battery flow (+charge / -discharge)) |
+| Battery SOC | Inverter Deye SUN-10K (Battery SOC) |
+| Battery Voltage | Inverter Deye SUN-10K (Battery voltage) |
+| Battery Energy In | Inverter Deye SUN-10K (Battery charged energy) |
+| Battery Energy Out | Inverter Deye SUN-10K (Battery discharged energy) |
+
+The dashboard wants battery power as + charge / - discharge, the opposite of
+the Deye's `battery_power`, so `battery_flow_power` exists only for it. It can
+show grid export only from a "P1 Smart Meter" device, which MQTT discovery
+cannot create; with the import kWh device, export counts as zero. The
+installation hardly ever exports, so this is left as is.
 
 ## Time-series database
 

@@ -67,6 +67,9 @@ pub enum DerivedOp {
     PositivePart,
     /// `max(-x, 0)`
     NegativePart,
+    /// `-x`, e.g. to flip a sign convention for a consumer that expects the
+    /// opposite one.
+    Negate,
 }
 
 impl DerivedOp {
@@ -75,6 +78,7 @@ impl DerivedOp {
             Self::Sum => "sum",
             Self::PositivePart => "positive_part",
             Self::NegativePart => "negative_part",
+            Self::Negate => "negate",
         }
     }
 }
@@ -376,7 +380,7 @@ fn compile(file: MapFile) -> Result<DeviceMap, MapError> {
         check_identifier(&entry.key)?;
         let (expected, ok) = match entry.op {
             DerivedOp::Sum => ("at least 1", !entry.inputs.is_empty()),
-            DerivedOp::PositivePart | DerivedOp::NegativePart => {
+            DerivedOp::PositivePart | DerivedOp::NegativePart | DerivedOp::Negate => {
                 ("exactly 1", entry.inputs.len() == 1)
             }
         };

@@ -456,6 +456,16 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 
+# Domoticz's Energy Dashboard expects battery power as + charge / - discharge.
+[[derived]]
+key = "battery_flow_power"
+name = "Battery flow (+charge / -discharge)"
+op = "negate"
+inputs = ["battery_power"]
+unit = "W"
+device_class = "power"
+state_class = "measurement"
+
 [[derived]]
 key = "grid_import_power"
 name = "Grid import power (inverter)"
