@@ -31,7 +31,8 @@ name = "inverter"
 port = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACB127910-if00"
 baud = 9600
 poll_interval = "5s"
-request_timeout = "500ms"
+# The Deye sometimes answers late: at 500ms ~10% of polls lost a block, at 1s ~3%.
+request_timeout = "1s"
 inter_request_gap = "50ms"
 reopen_after_timeouts = 5
 usb_reset_after = "3m"
