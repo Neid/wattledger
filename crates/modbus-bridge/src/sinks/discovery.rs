@@ -108,12 +108,13 @@ mod tests {
 
     #[test]
     fn unverified_sensors_stay_private() {
-        let map = load("deye-sg05lp3.toml");
+        let dtsu = load("dtsu666.toml");
         let mut cfg = MqttConfig::default();
-        let pv = &map.sensors[map.sensor_index("pv1_power").unwrap()];
-        assert!(!is_published(&cfg, pv));
+        let pf = &dtsu.sensors[dtsu.sensor_index("power_factor").unwrap()];
+        assert!(!is_published(&cfg, pf));
         cfg.publish_unverified = true;
-        assert!(is_published(&cfg, pv));
+        assert!(is_published(&cfg, pf));
+        let map = load("deye-sg05lp3.toml");
         let today = &map.sensors[map.sensor_index("pv_today_energy").unwrap()];
         assert!(!is_published(&cfg, today), "mqtt = false always wins");
     }

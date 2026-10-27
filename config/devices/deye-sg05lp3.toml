@@ -3,11 +3,13 @@
 # u16 registers, 0-based addresses. 32-bit counters are LOW word first.
 # Temperatures are (s16 - 1000) x 0.1 °C, i.e. scale 0.1, offset -100.
 #
-# Only battery_soc has been checked against the device so far. Everything else
-# comes from the ha-solarman map for SUN-SG04LP3 (same protocol family) and is
-# marked unverified: it is shown by --dry-run and written to the time-series
-# database, but not published to MQTT until you set `verified = true` after
-# comparing it with the inverter display.
+# The addresses come from the ha-solarman map for SUN-SG04LP3 (same protocol
+# family). battery_soc was checked against the inverter display. The rest were
+# enabled on 2026-10-27 after a live reading was consistent with itself and
+# with the DTSU666: V x A matched W for the battery and PV1, the load phases
+# summed to load_power, and grid voltages and the grid power sign matched the
+# meter. Still unconfirmed: gen_power (nothing on the GEN port) and the
+# inverter's own energy counters.
 #
 # Keys become MQTT unique_ids ("deye_<key>") and Domoticz database keys:
 # never rename a key once it has been published. Energy/power pairs follow
@@ -40,6 +42,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 [[register]]
 key = "battery_discharge_energy"
@@ -51,6 +54,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 [[register]]
 key = "grid_import_energy"
@@ -62,6 +66,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 [[register]]
 key = "grid_export_energy"
@@ -73,6 +78,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 [[register]]
 key = "load_energy"
@@ -84,6 +90,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 # Resets at midnight, so it is a plain total, not total_increasing, and kept
 # out of MQTT: Domoticz derives daily values from pv_energy itself.
@@ -97,6 +104,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total"
 range = [0, 200]
+verified = true
 mqtt = false
 
 [[register]]
@@ -109,6 +117,7 @@ unit = "kWh"
 device_class = "energy"
 state_class = "total_increasing"
 range = [0, 10000000]
+verified = true
 
 # ---- inverter temperatures ---------------------------------------------------
 
@@ -123,6 +132,7 @@ unit = "°C"
 device_class = "temperature"
 state_class = "measurement"
 range = [-30, 110]
+verified = true
 
 [[register]]
 key = "ac_temperature"
@@ -135,6 +145,7 @@ unit = "°C"
 device_class = "temperature"
 state_class = "measurement"
 range = [-30, 110]
+verified = true
 
 # ---- battery -----------------------------------------------------------------
 
@@ -149,6 +160,7 @@ unit = "°C"
 device_class = "temperature"
 state_class = "measurement"
 range = [-30, 80]
+verified = true
 
 [[register]]
 key = "battery_voltage"
@@ -160,6 +172,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [30, 65]
+verified = true
 
 [[register]]
 key = "battery_soc"
@@ -182,6 +195,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-15000, 15000]
+verified = true
 
 [[register]]
 key = "battery_current"
@@ -193,6 +207,7 @@ unit = "A"
 device_class = "current"
 state_class = "measurement"
 range = [-300, 300]
+verified = true
 
 # ---- grid as seen by the inverter ----------------------------------------------
 
@@ -206,6 +221,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [0, 300]
+verified = true
 
 [[register]]
 key = "l2_grid_voltage"
@@ -217,6 +233,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [0, 300]
+verified = true
 
 [[register]]
 key = "l3_grid_voltage"
@@ -228,6 +245,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [0, 300]
+verified = true
 
 # Sign convention not confirmed; assumed + import / - export.
 [[register]]
@@ -239,6 +257,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-25000, 25000]
+verified = true
 
 # ---- inverter output -------------------------------------------------------------
 
@@ -251,6 +270,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-10000, 10000]
+verified = true
 
 [[register]]
 key = "l2_inverter_power"
@@ -261,6 +281,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-10000, 10000]
+verified = true
 
 [[register]]
 key = "l3_inverter_power"
@@ -271,6 +292,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-10000, 10000]
+verified = true
 
 # ---- load ---------------------------------------------------------------------
 # Read as s16 so a stray negative value is rejected by the range instead of
@@ -285,6 +307,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-500, 15000]
+verified = true
 
 [[register]]
 key = "l2_load_power"
@@ -295,6 +318,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-500, 15000]
+verified = true
 
 [[register]]
 key = "l3_load_power"
@@ -305,6 +329,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-500, 15000]
+verified = true
 
 [[register]]
 key = "load_power"
@@ -315,6 +340,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-1000, 30000]
+verified = true
 
 # ---- GEN / SmartLoad port (least certain) ------------------------------------------
 
@@ -327,6 +353,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [-15000, 15000]
+verified = true
 
 # ---- PV -----------------------------------------------------------------------------
 
@@ -339,6 +366,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [0, 10000]
+verified = true
 
 [[register]]
 key = "pv2_power"
@@ -349,6 +377,7 @@ unit = "W"
 device_class = "power"
 state_class = "measurement"
 range = [0, 10000]
+verified = true
 
 [[register]]
 key = "pv1_voltage"
@@ -360,6 +389,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [0, 600]
+verified = true
 
 [[register]]
 key = "pv1_current"
@@ -371,6 +401,7 @@ unit = "A"
 device_class = "current"
 state_class = "measurement"
 range = [0, 30]
+verified = true
 
 [[register]]
 key = "pv2_voltage"
@@ -382,6 +413,7 @@ unit = "V"
 device_class = "voltage"
 state_class = "measurement"
 range = [0, 600]
+verified = true
 
 [[register]]
 key = "pv2_current"
@@ -393,6 +425,7 @@ unit = "A"
 device_class = "current"
 state_class = "measurement"
 range = [0, 30]
+verified = true
 
 # ---- derived --------------------------------------------------------------------------
 

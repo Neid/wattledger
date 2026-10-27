@@ -23,14 +23,14 @@ fn dtsu666_loads() {
 }
 
 #[test]
-fn deye_loads_with_only_soc_verified() {
+fn deye_loads_with_all_sensors_verified() {
     let map = load("deye-sg05lp3.toml");
     assert_eq!(map.device.id, "deye");
-    let verified: Vec<&str> = map
+    let unverified: Vec<&str> = map
         .sensors
         .iter()
-        .filter(|s| s.verified)
+        .filter(|s| !s.verified)
         .map(|s| s.key.as_str())
         .collect();
-    assert_eq!(verified, ["battery_soc"]);
+    assert!(unverified.is_empty(), "unverified: {unverified:?}");
 }

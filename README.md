@@ -151,8 +151,10 @@ them. Unknown fields are errors, so a typo like `scal = 0.1` is caught.
 
 ## Verifying registers
 
-Only `battery_soc` on the Deye is verified so far. The DTSU666 blocks were
-verified with mbpoll, except for power factor.
+All Deye registers are enabled. `battery_soc` was checked against the
+inverter display; the rest passed a consistency check of a live reading (see
+the comment at the top of `config/devices/deye-sg05lp3.toml`). The DTSU666
+blocks were verified with mbpoll, except for power factor.
 
 1. Stop the service, since the ports are opened exclusively:
    `sudo systemctl stop wattledger-bridge`
@@ -175,7 +177,10 @@ Open points:
 - **DTSU `grid_power` sign:** positive at night, so assumed `+ = import`.
   Confirm on the first export. If it's wrong, swap `positive_part` and
   `negative_part` for `grid_import_power` and `grid_export_power`.
-- **Deye `grid_power` (625) sign:** also assumed `+ = import`.
+- **Deye `grid_power` (625) sign:** `+ = import`, matching the DTSU666 while
+  importing. Confirm on the first export.
+- **Deye `gen_power` and energy counters:** published, but not yet compared
+  with the inverter display.
 - **DTSU power factor block (8234):** unverified. If the meter rejects the
   block, it shows as a failed block and the other blocks are unaffected.
 
