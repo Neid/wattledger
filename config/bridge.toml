@@ -56,6 +56,20 @@ publish_interval = "10s"
 # verified = true. Set this to announce them anyway.
 publish_unverified = false
 
+# Domoticz's Energy Dashboard shows grid export only for a "P1 Smart Meter"
+# device, which MQTT discovery cannot create. Create one by hand (Dummy
+# hardware -> Create Virtual Sensors -> P1 Smart Meter) and put its idx here;
+# the bridge then sends it the grid meter's import/export counters and power
+# on domoticz/in, at the device's publish interval.
+# Domoticz needs an "MQTT Client Gateway" hardware listening on domoticz/in
+# for this; the "MQTT Auto Discovery" hardware ignores that topic.
+[mqtt.domoticz_p1]
+idx = 55                                 # "Grid" on the "Virtual" dummy hardware
+device = "dtsu"
+# import_energy = "grid_import_energy"   # defaults
+# export_energy = "grid_export_energy"
+# power = "grid_power"                   # + import / - export
+
 [influx]
 enabled = true
 # VictoriaMetrics accepts InfluxDB line protocol on /write.

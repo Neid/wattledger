@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
 use tracing::{debug, info, warn};
 
-use super::discovery;
+use super::{discovery, domoticz_p1};
 use crate::config::MqttConfig;
 use crate::reading::Reading;
 use crate::throttle::ErrorLog;
@@ -62,6 +62,9 @@ impl MqttSink {
             options.set_credentials(user, self.cfg.password.as_deref().unwrap_or(""));
         }
 
+        if let Some(p1) = &self.cfg.domoticz_p1 {
+            info!(idx = p1.idx, device = %p1.device, topic = %p1.topic, "feeding a Domoticz P1 meter");
+        }
         let (client, eventloop) = AsyncClient::new(options, REQUEST_CAPACITY);
         let (events_tx, mut events) = mpsc::channel(8);
         let driver = tokio::spawn(drive(
@@ -94,6 +97,7 @@ impl MqttSink {
                     if due {
                         last_sent.insert(id.to_owned(), Instant::now());
                         self.publish_states(&client, &reading, &mut drops);
+                        self.publish_p1(&client, &reading, &mut drops);
                     }
                 }
                 event = events.recv() => match event {
@@ -170,6 +174,15 @@ impl MqttSink {
             }
         }
         debug!(sensors = count, "discovery published");
+    }
+
+    fn publish_p1(&self, client: &AsyncClient, reading: &Reading, drops: &mut ErrorLog) {
+        let Some(p1) = &self.cfg.domoticz_p1 else {
+            return;
+        };
+        if let Some(payload) = domoticz_p1::payload(p1, reading) {
+            try_publish(client, &p1.topic, QoS::AtMostOnce, false, payload, drops);
+        }
     }
 
     fn publish_states(&self, client: &AsyncClient, reading: &Reading, drops: &mut ErrorLog) {

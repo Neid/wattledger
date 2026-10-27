@@ -232,7 +232,7 @@ Assign:
 
 | Field | Device |
 |---|---|
-| P1/Grid | Grid meter DTSU666 (Grid import energy) |
+| P1/Grid | the virtual P1 Smart Meter below (or Grid meter DTSU666 (Grid import energy)) |
 | Solar | Inverter Deye SUN-10K (PV energy) |
 | Battery | Inverter Deye SUN-10K (Battery flow (+charge / -discharge)) |
 | Battery SOC | Inverter Deye SUN-10K (Battery SOC) |
@@ -241,10 +241,26 @@ Assign:
 | Battery Energy Out | Inverter Deye SUN-10K (Battery discharged energy) |
 
 The dashboard wants battery power as + charge / - discharge, the opposite of
-the Deye's `battery_power`, so `battery_flow_power` exists only for it. It can
-show grid export only from a "P1 Smart Meter" device, which MQTT discovery
-cannot create; with the import kWh device, export counts as zero. The
-installation hardly ever exports, so this is left as is.
+the Deye's `battery_power`, so `battery_flow_power` exists only for it.
+
+It shows grid export only for a "P1 Smart Meter" device, which MQTT discovery
+cannot create (with the import kWh device, export counts as zero). So the
+bridge can feed a virtual one:
+
+1. Setup → Hardware: add "Dummy (Does nothing, use for virtual switches
+   only)", then on it **Create Virtual Sensors**, type **P1 Smart Meter**.
+2. Note the new device's idx (Setup → Devices) and set it in
+   `[mqtt.domoticz_p1]` in `config/bridge.toml`, then deploy.
+3. The bridge publishes `{"idx":N,"nvalue":0,"svalue":"USAGE1;0;RETURN1;0;CONS;PROD"}`
+   to `domoticz/in` (counters in Wh, power in W) with the DTSU666's import and
+   export counters and grid power.
+4. Domoticz only acts on `domoticz/in` with an **MQTT Client Gateway with LAN
+   interface** hardware (127.0.0.1:1883, publish topic "out" or none). The
+   "MQTT Auto Discovery" hardware shows the topic in its settings but ignores
+   messages on it.
+
+The counters are absolute, so the day the device is created may show the
+whole meter total as that day's usage; from the next day on it is right.
 
 ## Time-series database
 

@@ -71,6 +71,40 @@ pub struct MqttConfig {
     pub publish_interval: Duration,
     /// Also announce sensors whose register mapping is not yet verified.
     pub publish_unverified: bool,
+    /// Optional virtual P1 Smart Meter in Domoticz, fed via `domoticz/in`.
+    pub domoticz_p1: Option<DomoticzP1Config>,
+}
+
+/// A Domoticz P1 Smart Meter device (created by hand, addressed by idx) that
+/// gets one device's grid import/export counters and signed grid power.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DomoticzP1Config {
+    pub idx: u32,
+    /// Device id from the device map, e.g. "dtsu".
+    pub device: String,
+    #[serde(default = "default_p1_import")]
+    pub import_energy: String,
+    #[serde(default = "default_p1_export")]
+    pub export_energy: String,
+    /// Signed power, + import / - export.
+    #[serde(default = "default_p1_power")]
+    pub power: String,
+    #[serde(default = "default_p1_topic")]
+    pub topic: String,
+}
+
+fn default_p1_import() -> String {
+    "grid_import_energy".into()
+}
+fn default_p1_export() -> String {
+    "grid_export_energy".into()
+}
+fn default_p1_power() -> String {
+    "grid_power".into()
+}
+fn default_p1_topic() -> String {
+    "domoticz/in".into()
 }
 
 impl Default for MqttConfig {
@@ -87,6 +121,7 @@ impl Default for MqttConfig {
             discovery_prefix: "homeassistant".into(),
             publish_interval: Duration::from_secs(10),
             publish_unverified: false,
+            domoticz_p1: None,
         }
     }
 }
@@ -266,11 +301,43 @@ pub fn load(path: &Path) -> anyhow::Result<Setup> {
         });
     }
 
+    if let Some(p1) = &file.mqtt.domoticz_p1 {
+        validate_p1(p1, &buses)?;
+    }
+
     Ok(Setup {
         buses,
         mqtt: file.mqtt,
         influx: file.influx,
     })
+}
+
+fn validate_p1(p1: &DomoticzP1Config, buses: &[BusSetup]) -> anyhow::Result<()> {
+    ensure!(p1.idx > 0, "mqtt.domoticz_p1.idx must be the Domoticz device idx (> 0)");
+    validate_topic("mqtt.domoticz_p1.topic", &p1.topic)?;
+    let Some(map) = buses
+        .iter()
+        .flat_map(|b| &b.devices)
+        .map(|d| &d.map)
+        .find(|m| m.device.id == p1.device)
+    else {
+        bail!("mqtt.domoticz_p1.device {:?} is not a configured device", p1.device);
+    };
+    for (field, key, unit) in [
+        ("import_energy", &p1.import_energy, "kWh"),
+        ("export_energy", &p1.export_energy, "kWh"),
+        ("power", &p1.power, "W"),
+    ] {
+        let Some(i) = map.sensor_index(key) else {
+            bail!("mqtt.domoticz_p1.{field}: device {:?} has no sensor {key:?}", p1.device);
+        };
+        let got = map.sensors[i].unit.as_deref().unwrap_or("");
+        ensure!(
+            got == unit,
+            "mqtt.domoticz_p1.{field}: sensor {key:?} is in {got:?}, expected {unit}"
+        );
+    }
+    Ok(())
 }
 
 fn validate_topic(what: &str, topic: &str) -> anyhow::Result<()> {
@@ -305,5 +372,50 @@ mod tests {
         assert_eq!(setup.buses[0].config.poll_interval, Duration::from_secs(2));
         assert_eq!(setup.buses[1].config.poll_interval, Duration::from_secs(5));
         assert!(setup.buses.iter().all(|b| b.config.usb_reset_after.is_some()));
+    }
+
+    /// Loads a config with one DTSU bus plus `extra`.
+    fn load_with(name: &str, extra: &str) -> anyhow::Result<Setup> {
+        let maps = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/devices");
+        let text = format!(
+            r#"
+            [[bus]]
+            name = "grid-meter"
+            port = "/dev/null"
+            poll_interval = "2s"
+            devices = [{{ slave = 1, map = "{maps}/dtsu666.toml" }}]
+            {extra}
+            "#
+        );
+        let dir = std::env::temp_dir().join(format!("wattledger-config-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("bridge.toml");
+        std::fs::write(&path, text)?;
+        let result = load(&path);
+        std::fs::remove_dir_all(&dir)?;
+        result
+    }
+
+    #[test]
+    fn p1_defaults_to_grid_sensors() {
+        let setup = load_with("p1-ok", "[mqtt.domoticz_p1]\nidx = 42\ndevice = \"dtsu\"").unwrap();
+        let p1 = setup.mqtt.domoticz_p1.unwrap();
+        assert_eq!(p1.idx, 42);
+        assert_eq!(p1.import_energy, "grid_import_energy");
+        assert_eq!(p1.power, "grid_power");
+        assert_eq!(p1.topic, "domoticz/in");
+    }
+
+    #[test]
+    fn p1_rejects_bad_setups() {
+        for (name, extra, msg) in [
+            ("p1-dev", "idx = 1\ndevice = \"deye\"", "not a configured device"),
+            ("p1-key", "idx = 1\ndevice = \"dtsu\"\npower = \"nope\"", "no sensor"),
+            ("p1-unit", "idx = 1\ndevice = \"dtsu\"\npower = \"l1_voltage\"", "expected W"),
+            ("p1-idx", "idx = 0\ndevice = \"dtsu\"", "idx"),
+        ] {
+            let err = load_with(name, &format!("[mqtt.domoticz_p1]\n{extra}")).unwrap_err();
+            assert!(format!("{err:#}").contains(msg), "{name}: {err:#}");
+        }
     }
 }
