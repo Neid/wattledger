@@ -5,6 +5,13 @@
 
 # One [[bus]] per serial adapter. Each bus is polled by its own task, so a
 # failing adapter never delays the other one. Serial format is fixed at 8N1.
+#
+# usb_reset_after: when a bus gets no answer for this long, the bridge asks
+# the root helper (deploy/wattledger-usb-reset) to switch the adapter's USB
+# port off and on, like unplugging it. A hung USB-RS485 adapter stays on the
+# USB bus but stops passing data; reopening the port does not fix that.
+# Further resets back off (x2 each, up to 1 h) until the bus answers again.
+# Leave it out to disable resets for a bus.
 
 [[bus]]
 name = "grid-meter"
@@ -14,6 +21,7 @@ poll_interval = "2s"
 request_timeout = "500ms"
 inter_request_gap = "50ms"
 reopen_after_timeouts = 5
+usb_reset_after = "3m"
 devices = [
     { slave = 1, map = "devices/dtsu666.toml" },
 ]
@@ -26,6 +34,7 @@ poll_interval = "5s"
 request_timeout = "500ms"
 inter_request_gap = "50ms"
 reopen_after_timeouts = 5
+usb_reset_after = "3m"
 devices = [
     # mqtt_interval overrides mqtt.publish_interval for this device.
     { slave = 2, map = "devices/deye-sg05lp3.toml" },

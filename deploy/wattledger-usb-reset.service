@@ -1,0 +1,14 @@
+[Unit]
+Description=Reset a hung wattledger USB-RS485 adapter
+# Started by wattledger-usb-reset.path; see deploy/wattledger-usb-reset.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wattledger-usb-reset
+
+# Runs as root because it writes to /sys; nothing else is needed.
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full

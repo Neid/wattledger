@@ -11,6 +11,8 @@ Restart=always
 RestartSec=5
 # The bridge publishes "offline" and flushes the line buffer on SIGTERM.
 TimeoutStopSec=15
+# USB adapter reset requests go here (see deploy/wattledger-usb-reset).
+RuntimeDirectory=wattledger-bridge
 
 # Unprivileged throwaway user with access to the USB-RS485 adapters only.
 DynamicUser=yes

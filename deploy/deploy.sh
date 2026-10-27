@@ -5,7 +5,8 @@
 #   deploy/deploy.sh [user@host]      # default: $WATTLEDGER_PI or pi@raspberrypi.local
 #   deploy/deploy.sh --no-build [user@host]
 #
-# It copies the binary, config/, the systemd unit and install.sh to
+# It copies the binary, config/, the systemd units, the USB reset helper and
+# install.sh to
 # ~/wattledger on the Pi. If the bridge is already installed there, it then
 # runs "install.sh --bridge-only", which installs the binary, unit and config
 # and restarts the service (sudo may ask for your password). The first time,
@@ -41,7 +42,9 @@ fi
 
 log "Copying files to $pi:~/$REMOTE_DIR"
 ssh "$pi" "mkdir -p $REMOTE_DIR"
-rsync -az "$bin" deploy/install.sh deploy/wattledger-bridge.service "$pi:$REMOTE_DIR/"
+rsync -az "$bin" deploy/install.sh deploy/wattledger-bridge.service \
+    deploy/wattledger-usb-reset deploy/wattledger-usb-reset.path deploy/wattledger-usb-reset.service \
+    "$pi:$REMOTE_DIR/"
 rsync -az --delete config/ "$pi:$REMOTE_DIR/config/"
 
 if ssh "$pi" 'test -f /etc/systemd/system/wattledger-bridge.service'; then

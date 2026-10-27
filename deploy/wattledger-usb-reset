@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Resets the USB adapter behind a serial port, like unplugging it and plugging
+# it back in. Runs as root.
+#
+#   wattledger-usb-reset                 # handle requests from the bridge (used by
+#                                        # wattledger-usb-reset.service)
+#   wattledger-usb-reset /dev/serial/by-id/usb-...   # reset one port by hand
+#
+# The bridge runs unprivileged. When a bus stays silent it writes the port path
+# to /run/wattledger-bridge/reset-<bus>; wattledger-usb-reset.path then starts
+# this script. Only ttyACM/ttyUSB devices are accepted, so a request can never
+# reset anything but a serial adapter.
+
+set -uo pipefail
+
+REQUEST_DIR=/run/wattledger-bridge
+# Time the port stays off; long enough for the adapter to lose its state.
+OFF_SECONDS=3
+
+reset_port() {
+    local port=$1 dev name usb portdir id
+    case $port in
+        /dev/serial/by-id/* | /dev/ttyACM* | /dev/ttyUSB*) ;;
+        *) echo "refusing $port: not a serial port path" >&2; return 1 ;;
+    esac
+    dev="$(readlink -e -- "$port")" || { echo "$port: not found" >&2; return 1; }
+    name="${dev#/dev/}"
+    [[ $name =~ ^tty(ACM|USB)[0-9]+$ ]] || { echo "refusing $port: $dev is not a USB serial port" >&2; return 1; }
+
+    # Walk up from the tty to the USB device (the directory with idVendor).
+    usb="$(readlink -e "/sys/class/tty/$name/device")" || { echo "$port: no sysfs device" >&2; return 1; }
+    while [[ $usb == /sys/devices/* && ! -e $usb/idVendor ]]; do
+        usb="${usb%/*}"
+    done
+    [[ -e $usb/idVendor ]] || { echo "$port: no USB device found for $dev" >&2; return 1; }
+    id="$(<"$usb/idVendor"):$(<"$usb/idProduct") at ${usb##*/}"
+
+    # Switching the hub port off and on re-enumerates the adapter (and cuts
+    # its power on hubs with per-port power switching). Resolve the port first:
+    # the device directory disappears while the port is off.
+    portdir="$(readlink -e "$usb/port" 2>/dev/null)"
+    if [[ -n $portdir && -w $portdir/disable ]]; then
+        echo "$port ($name, USB $id): switching the hub port off for ${OFF_SECONDS}s"
+        echo 1 >"$portdir/disable" || return 1
+        sleep "$OFF_SECONDS"
+        echo 0 >"$portdir/disable" || return 1
+    else
+        echo "$port ($name, USB $id): no port control, re-authorizing the device"
+        echo 0 >"$usb/authorized" || return 1
+        sleep 1
+        echo 1 >"$usb/authorized" || return 1
+    fi
+}
+
+[[ $EUID -eq 0 ]] || { echo "run as root" >&2; exit 1; }
+
+if [[ $# -gt 0 ]]; then
+    status=0
+    for port in "$@"; do
+        reset_port "$port" || status=1
+    done
+    exit "$status"
+fi
+
+shopt -s nullglob
+for request in "$REQUEST_DIR"/reset-*; do
+    [[ -f $request && ! -L $request ]] || { rm -f -- "$request"; continue; }
+    port="$(head -c 512 -- "$request" | head -n 1)"
+    rm -f -- "$request"
+    echo "request from the bridge: ${request##*/}"
+    reset_port "$port" || echo "${request##*/}: reset failed" >&2
+done
+exit 0

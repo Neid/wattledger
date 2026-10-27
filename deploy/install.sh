@@ -3,14 +3,15 @@
 # directory deploy.sh fills (default ~/wattledger):
 #
 #   sudo ~/wattledger/install.sh                 # full install, safe to re-run
-#   sudo ~/wattledger/install.sh --bridge-only   # binary, unit and config only (used by deploy.sh)
+#   sudo ~/wattledger/install.sh --bridge-only   # bridge, reset helper, units and config only (used by deploy.sh)
 #
 # A full install:
 #   - installs Mosquitto (and mbpoll, if the distribution has it) with apt;
 #   - downloads VictoriaMetrics if it is missing, checks its SHA-256 and sets up
 #     its systemd service;
 #   - installs the bridge binary, its config and its systemd service, then
-#     (re)starts it.
+#     (re)starts it;
+#   - installs the USB adapter reset helper and its systemd path unit.
 #
 # Environment overrides:
 #   VM_VERSION=v1.154.0   VictoriaMetrics version to install or switch to
@@ -26,6 +27,8 @@ SRC="$(dirname "$(readlink -f "$0")")"
 CONFIG_DIR=/etc/wattledger
 BRIDGE_BIN=/usr/local/bin/modbus-bridge
 BRIDGE_UNIT=wattledger-bridge.service
+RESET_BIN=/usr/local/sbin/wattledger-usb-reset
+RESET_UNITS=(wattledger-usb-reset.service wattledger-usb-reset.path)
 
 VM_BIN=/usr/local/bin/victoria-metrics-prod
 VM_DATA=/var/lib/victoria-metrics
@@ -50,7 +53,7 @@ esac
 
 [[ $EUID -eq 0 ]] || die "run as root: sudo $0 $*"
 [[ $(uname -m) == aarch64 ]] || die "expected an aarch64 system, got $(uname -m) (64-bit Raspberry Pi OS needed)"
-for f in modbus-bridge "$BRIDGE_UNIT" config/bridge.toml; do
+for f in modbus-bridge "$BRIDGE_UNIT" wattledger-usb-reset "${RESET_UNITS[@]}" config/bridge.toml; do
     [[ -e $SRC/$f ]] || die "$SRC/$f is missing; run deploy.sh on the build machine first"
 done
 
@@ -157,9 +160,18 @@ install_bridge() {
     install -d -m 755 "$CONFIG_DIR"
     rsync -rt --chmod=D755,F644 "$SRC/config/" "$CONFIG_DIR/"
 
+    # Root helper that resets a hung USB adapter when the bridge asks for it.
+    log "Installing $RESET_BIN"
+    install -m 755 "$SRC/wattledger-usb-reset" "$RESET_BIN"
+
     install -m 644 "$SRC/$BRIDGE_UNIT" "/etc/systemd/system/$BRIDGE_UNIT"
+    local unit
+    for unit in "${RESET_UNITS[@]}"; do
+        install -m 644 "$SRC/$unit" "/etc/systemd/system/$unit"
+    done
     systemctl daemon-reload
     systemctl enable "$BRIDGE_UNIT"
+    systemctl enable --now wattledger-usb-reset.path
 
     # The unit only grants access to ttyACM devices.
     local port dev name

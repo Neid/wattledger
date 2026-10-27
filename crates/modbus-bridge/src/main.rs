@@ -9,6 +9,7 @@ mod reading;
 mod rtu;
 mod sinks;
 mod throttle;
+mod usb_reset;
 
 use std::io::IsTerminal;
 use std::process::ExitCode;

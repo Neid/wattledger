@@ -48,6 +48,16 @@ binary (phase 3), for registers verified one by one by hand.
   device's register blocks one request at a time, and reopens its port with
   backoff (1 s up to 60 s) after an I/O error or repeated timeouts. A failing
   bus never affects the other one.
+- **Hung adapters are reset.** A USB-RS485 adapter can hang while it stays on
+  the USB bus: the port opens, but nothing comes back, and reopening it does
+  not help. When a bus gets no answer for `usb_reset_after` (3 minutes in the
+  shipped config), the bridge writes a request to
+  `/run/wattledger-bridge/reset-<bus>`. `wattledger-usb-reset.path` then runs
+  `/usr/local/sbin/wattledger-usb-reset` as root, which switches the
+  adapter's USB hub port off for 3 s and on again, like unplugging it. If the
+  bus stays silent, later resets wait twice as long each time, up to 1 hour.
+  The helper only accepts `ttyACM`/`ttyUSB` ports, so it cannot reset any
+  other USB device.
 - **Decoding** happens in the `registers` crate: raw words become scaled
   values, which are checked against a plausibility range. `total_increasing`
   counters are also rejected if they go backwards. A rejected value is not
@@ -81,6 +91,9 @@ deploy/
   deploy.sh                   build machine: build, copy to the Pi, update + restart
   install.sh                  on the Pi: Mosquitto, VictoriaMetrics, bridge, services
   wattledger-bridge.service   systemd unit
+  wattledger-usb-reset        root helper: resets a hung USB-RS485 adapter
+  wattledger-usb-reset.path   systemd units that run it on the bridge's request
+  wattledger-usb-reset.service
 tools/mbpoll/                 the mbpoll commands used to verify registers
 ```
 
@@ -314,5 +327,12 @@ Under the hood this runs `sudo ~/wattledger/install.sh --bridge-only`, which
 leaves packages and VictoriaMetrics alone.
 
 The unit runs the bridge under a dynamic unprivileged user with access to
-`ttyACM` devices only, and restarts it 5 s after any exit. Set
+`ttyACM` devices only, and restarts it 5 s after any exit.
+
+To reset an adapter by hand (the bridge reopens the port by itself):
+
+```sh
+sudo wattledger-usb-reset /dev/serial/by-id/usb-1a86_USB_Single_Serial_5ACB127910-if00
+journalctl -u wattledger-usb-reset    # resets the bridge asked for
+``` Set
 `WATTLEDGER_LOG=debug` in the unit for more detail.

@@ -35,6 +35,10 @@ pub struct BusConfig {
     /// Consecutive timeouts after which the port is closed and reopened.
     #[serde(default = "default_reopen_after_timeouts")]
     pub reopen_after_timeouts: u32,
+    /// Silence after which the port's USB adapter is reset (needs the root
+    /// helper from deploy/). None disables resets.
+    #[serde(default, with = "humantime_serde::option")]
+    pub usb_reset_after: Option<Duration>,
     pub(crate) devices: Vec<DeviceEntry>,
 }
 
@@ -120,6 +124,9 @@ impl Default for InfluxConfig {
     }
 }
 
+/// A reset takes a few seconds; resetting more often only adds outages.
+const MIN_USB_RESET_AFTER: Duration = Duration::from_secs(30);
+
 fn default_baud() -> u32 {
     9600
 }
@@ -181,6 +188,16 @@ pub fn load(path: &Path) -> anyhow::Result<Setup> {
     let mut device_ids = HashSet::new();
     let mut buses = Vec::with_capacity(file.buses.len());
     for bus in file.buses {
+        // The name is part of the USB reset request file name.
+        ensure!(
+            !bus.name.is_empty()
+                && bus
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "bus name {:?} may only contain letters, digits, '-' and '_'",
+            bus.name
+        );
         ensure!(
             bus_names.insert(bus.name.clone()),
             "duplicate bus name {:?}",
@@ -202,6 +219,14 @@ pub fn load(path: &Path) -> anyhow::Result<Setup> {
             "bus {:?}: reopen_after_timeouts must be > 0",
             bus.name
         );
+        if let Some(after) = bus.usb_reset_after {
+            ensure!(
+                after >= MIN_USB_RESET_AFTER,
+                "bus {:?}: usb_reset_after must be at least {}",
+                bus.name,
+                humantime::format_duration(MIN_USB_RESET_AFTER)
+            );
+        }
 
         let mut slaves = HashSet::new();
         let mut devices = Vec::with_capacity(bus.devices.len());
@@ -279,5 +304,6 @@ mod tests {
         assert_eq!(ids, ["dtsu", "deye"]);
         assert_eq!(setup.buses[0].config.poll_interval, Duration::from_secs(2));
         assert_eq!(setup.buses[1].config.poll_interval, Duration::from_secs(5));
+        assert!(setup.buses.iter().all(|b| b.config.usb_reset_after.is_some()));
     }
 }

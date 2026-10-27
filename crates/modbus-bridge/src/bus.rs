@@ -14,6 +14,7 @@ use crate::config::{BusConfig, BusSetup};
 use crate::reading::{Fanout, Reading};
 use crate::rtu::{self, RtuError};
 use crate::throttle::ErrorLog;
+use crate::usb_reset::UsbReset;
 
 const REOPEN_BACKOFF_MIN: Duration = Duration::from_secs(1);
 const REOPEN_BACKOFF_MAX: Duration = Duration::from_secs(60);
@@ -88,8 +89,9 @@ impl Bus {
     /// Polls until shutdown, reopening the port with backoff on failure.
     pub async fn run(mut self, fanout: Arc<Fanout>, mut shutdown: watch::Receiver<bool>) {
         let mut backoff = REOPEN_BACKOFF_MIN;
+        let mut usb_reset = self.usb_reset();
         loop {
-            let fault = match self.open() {
+            let (fault, port_was_open) = match self.open() {
                 Ok(mut client) => {
                     info!(bus = %self.name, port = %self.config.port, "serial port opened");
                     self.consecutive_timeouts = 0;
@@ -106,6 +108,9 @@ impl Bus {
                         let (readings, fault) = cycle;
                         if readings.iter().any(|r| r.blocks.iter().any(Result::is_ok)) {
                             backoff = REOPEN_BACKOFF_MIN;
+                            if let Some(reset) = &mut usb_reset {
+                                reset.alive(std::time::Instant::now());
+                            }
                             if let Some(n) = self.health.success() {
                                 info!(bus = %self.name, failures = n, "bus recovered");
                             }
@@ -114,12 +119,28 @@ impl Bus {
                             fanout.send(reading);
                         }
                         if let Some(fault) = fault {
-                            break fault.to_string();
+                            break (fault.to_string(), true);
                         }
                     }
                 }
-                Err(e) => format!("cannot open {}: {e}", self.config.port),
+                Err(e) => (format!("cannot open {}: {e}", self.config.port), false),
             };
+            // A missing adapter cannot be reset; one that opens but stays
+            // silent may be hung.
+            if port_was_open
+                && let Some(reset) = &mut usb_reset
+                && let Some(silent) = reset.due(std::time::Instant::now())
+            {
+                match reset.request(&self.config.port) {
+                    Ok(()) => {
+                        warn!(bus = %self.name, port = %self.config.port, silent = %humantime::format_duration(round_secs(silent)), "no answer for too long, resetting the USB adapter");
+                        backoff = REOPEN_BACKOFF_MIN;
+                    }
+                    Err(e) => {
+                        warn!(bus = %self.name, error = %e, "cannot request a USB adapter reset");
+                    }
+                }
+            }
             if let Some(n) = self.health.failure() {
                 warn!(bus = %self.name, error = %fault, failures = n, retry_in = ?backoff, "bus failure, reopening port");
             }
@@ -129,6 +150,16 @@ impl Bus {
             }
             backoff = (backoff * 2).min(REOPEN_BACKOFF_MAX);
         }
+    }
+
+    fn usb_reset(&self) -> Option<UsbReset> {
+        let after = self.config.usb_reset_after?;
+        let Some(dir) = UsbReset::runtime_dir() else {
+            warn!(bus = %self.name, "usb_reset_after is set, but RUNTIME_DIRECTORY is not (not started by systemd?); USB resets are off");
+            return None;
+        };
+        info!(bus = %self.name, after = %humantime::format_duration(after), "USB adapter reset enabled");
+        Some(UsbReset::new(dir, &self.name, after, std::time::Instant::now()))
     }
 
     /// Opens the port, polls every device once and closes it again.
@@ -228,6 +259,10 @@ impl Bus {
     }
 }
 
+fn round_secs(d: Duration) -> Duration {
+    Duration::from_secs(d.as_secs())
+}
+
 /// Resolves once shutdown is requested (or the sender is gone).
 async fn stopped(shutdown: &mut watch::Receiver<bool>) {
     let _ = shutdown.wait_for(|&stop| stop).await;
@@ -274,6 +309,7 @@ mod tests {
                 request_timeout: Duration::from_millis(100),
                 inter_request_gap: Duration::ZERO,
                 reopen_after_timeouts,
+                usb_reset_after: None,
                 devices: Vec::new(),
             },
             devices: vec![DeviceSetup {
