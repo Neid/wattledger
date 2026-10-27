@@ -214,6 +214,17 @@ Open points:
 - Signed powers are split into import/export (charge/discharge) halves with
   `[[derived]]` entries. The signed value is published as well.
 
+### Energy flow page
+
+`domoticz/Energy.html` is a Domoticz custom page: an animated diagram of the
+power flowing between solar, grid, home and battery (with the battery's state
+of charge), plus today's totals. `deploy/deploy.sh` copies it to
+`~/domoticz/www/templates/`, and after a browser refresh it is under
+**Custom → Energy** in Domoticz. It reads the devices through the Domoticz
+JSON API by their `unique_id`s, so it needs no idx numbers. Grid power comes
+from the DTSU666. Open the file directly with `?demo` to see it with made-up
+values.
+
 ## Time-series database
 
 There is one line per device poll, all fields in one line, with a nanosecond

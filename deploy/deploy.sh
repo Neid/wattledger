@@ -6,8 +6,9 @@
 #   deploy/deploy.sh --no-build [user@host]
 #
 # It copies the binary, config/, the systemd units, the USB reset helper and
-# install.sh to
-# ~/wattledger on the Pi. If the bridge is already installed there, it then
+# install.sh to ~/wattledger on the Pi, and the Domoticz energy flow page to
+# ~/domoticz/www/templates (set WATTLEDGER_DOMOTICZ_TEMPLATES for another
+# place; skipped if it is missing). If the bridge is already installed there, it then
 # runs "install.sh --bridge-only", which installs the binary, unit and config
 # and restarts the service (sudo may ask for your password). The first time,
 # run the full install on the Pi instead: sudo ~/wattledger/install.sh
@@ -46,6 +47,13 @@ rsync -az "$bin" deploy/install.sh deploy/wattledger-bridge.service \
     deploy/wattledger-usb-reset deploy/wattledger-usb-reset.path deploy/wattledger-usb-reset.service \
     "$pi:$REMOTE_DIR/"
 rsync -az --delete config/ "$pi:$REMOTE_DIR/config/"
+
+# The Domoticz energy flow page, if Domoticz lives in the usual place.
+domoticz_templates="${WATTLEDGER_DOMOTICZ_TEMPLATES:-domoticz/www/templates}"
+if ssh "$pi" "test -d $domoticz_templates"; then
+    log "Copying the energy flow page to $pi:~/$domoticz_templates"
+    rsync -a domoticz/Energy.html "$pi:$domoticz_templates/"
+fi
 
 if ssh "$pi" 'test -f /etc/systemd/system/wattledger-bridge.service'; then
     log "Updating the installed bridge"

@@ -1,0 +1,467 @@
+<!--
+  wattledger energy flow: a Domoticz custom page.
+
+  Copy to <domoticz>/www/templates/Energy.html (deploy/deploy.sh does this);
+  it then shows up under the "Custom" menu as "Energy". Values come from the
+  Domoticz JSON API, matched by the MQTT unique_ids the bridge announces
+  (deye_pv_power, dtsu_grid_power, ...), so no idx numbers are needed.
+
+  Open it standalone with ?demo to see it with made-up values.
+-->
+<div id="wl-flow">
+  <div class="wl-card">
+    <div class="wl-head">
+      <h2>Energy flow</h2>
+      <span class="wl-status" data-status>connecting…</span>
+    </div>
+
+    <svg class="wl-svg" viewBox="0 0 600 560" role="img" aria-label="Energy flow between solar, grid, home and battery">
+      <g data-paths></g>
+      <g data-dots></g>
+
+      <!-- Solar -->
+      <g class="wl-node" data-node="solar" transform="translate(300 105)">
+        <circle class="wl-ring-bg" r="60"></circle>
+        <g class="wl-icon" transform="translate(0 -30)">
+          <circle r="7"></circle>
+          <path d="M0-14v-4M0 14v4M-14 0h-4M14 0h4M-10-10l-3-3M10 10l3 3M-10 10l-3 3M10-10l3-3"></path>
+        </g>
+        <text class="wl-value" y="6" data-v="solar">–</text>
+        <text class="wl-sub" y="26" data-v="solarSub"></text>
+      </g>
+
+      <!-- Grid -->
+      <g class="wl-node" data-node="grid" transform="translate(95 280)">
+        <circle class="wl-ring-bg" r="60"></circle>
+        <g class="wl-icon" transform="translate(0 -30)">
+          <path d="M-8 14L-3-14h6L8 14M-6 2h12M-4-6h8M-13-9h26M-9-14h18"></path>
+        </g>
+        <text class="wl-value" y="6" data-v="grid">–</text>
+        <text class="wl-sub" y="26" data-v="gridSub"></text>
+      </g>
+
+      <!-- Home -->
+      <g class="wl-node" data-node="home" transform="translate(505 280)">
+        <circle class="wl-ring-bg" r="60"></circle>
+        <g class="wl-icon" transform="translate(0 -30)">
+          <path d="M-13 0L0-12 13 0M-9-3v15h18V-3M-3 12V4h6v8"></path>
+        </g>
+        <text class="wl-value" y="6" data-v="home">–</text>
+        <text class="wl-sub" y="26" data-v="homeSub">home</text>
+      </g>
+
+      <!-- Battery: the outer ring shows the state of charge -->
+      <g class="wl-node" data-node="battery" transform="translate(300 455)">
+        <circle class="wl-ring-bg" r="60"></circle>
+        <circle class="wl-soc" r="60" data-soc transform="rotate(-90)"></circle>
+        <g class="wl-icon" transform="translate(0 -30)">
+          <rect x="-13" y="-7" width="24" height="14" rx="2"></rect>
+          <path d="M13-3v6"></path>
+          <rect class="wl-fill" x="-11" y="-5" height="10" width="0" data-fill></rect>
+        </g>
+        <text class="wl-value" y="6" data-v="battery">–</text>
+        <text class="wl-sub" y="26" data-v="batterySub"></text>
+        <text class="wl-sub" y="82" data-v="batteryInfo"></text>
+      </g>
+    </svg>
+
+    <div class="wl-tiles">
+      <div class="wl-tile"><span class="wl-k">Solar today</span><span class="wl-n" data-t="solar">–</span></div>
+      <div class="wl-tile"><span class="wl-k">Home today</span><span class="wl-n" data-t="home">–</span></div>
+      <div class="wl-tile"><span class="wl-k">Grid in / out</span><span class="wl-n" data-t="grid">–</span></div>
+      <div class="wl-tile"><span class="wl-k">Battery in / out</span><span class="wl-n" data-t="battery">–</span></div>
+      <div class="wl-tile"><span class="wl-k">Not from grid</span><span class="wl-n" data-t="self">–</span></div>
+    </div>
+  </div>
+</div>
+
+<style>
+#wl-flow {
+  --wl-bg: #151a21;
+  --wl-panel: #1c232c;
+  --wl-line: #2c3540;
+  --wl-text: #e6edf3;
+  --wl-muted: #8b98a5;
+  --wl-solar: #f2b705;
+  --wl-grid: #6aa6ff;
+  --wl-export: #3fb950;
+  --wl-battery: #c678dd;
+  --wl-home: #2ec4b6;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--wl-text);
+  padding: 12px 0;
+}
+#wl-flow .wl-card {
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--wl-bg);
+  border-radius: 14px;
+  padding: 16px 16px 18px;
+  box-sizing: border-box;
+}
+#wl-flow .wl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 4px; }
+#wl-flow h2 { margin: 0; font-size: 18px; font-weight: 600; color: var(--wl-text); }
+#wl-flow .wl-status { font-size: 12px; color: var(--wl-muted); font-variant-numeric: tabular-nums; }
+#wl-flow .wl-status.wl-bad { color: #ff7b72; }
+#wl-flow .wl-svg { display: block; width: 100%; height: auto; margin-top: 4px; }
+
+#wl-flow .wl-path { fill: none; stroke: var(--wl-line); stroke-width: 3; stroke-linecap: round; transition: stroke .4s, opacity .4s; }
+#wl-flow .wl-path.wl-idle { opacity: .45; }
+#wl-flow .wl-dot { transition: opacity .4s; }
+
+#wl-flow .wl-ring-bg { fill: var(--wl-panel); stroke: var(--wl-line); stroke-width: 4; transition: stroke .4s; }
+#wl-flow [data-node="solar"].wl-on .wl-ring-bg { stroke: var(--wl-solar); }
+#wl-flow [data-node="grid"].wl-on .wl-ring-bg { stroke: var(--wl-grid); }
+#wl-flow [data-node="grid"].wl-out .wl-ring-bg { stroke: var(--wl-export); }
+#wl-flow [data-node="home"] .wl-ring-bg { stroke: var(--wl-home); }
+#wl-flow .wl-soc { fill: none; stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray .6s, stroke .6s; }
+
+#wl-flow .wl-icon { fill: none; stroke: var(--wl-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#wl-flow [data-node="solar"].wl-on .wl-icon { stroke: var(--wl-solar); }
+#wl-flow [data-node="grid"].wl-on .wl-icon { stroke: var(--wl-grid); }
+#wl-flow [data-node="grid"].wl-out .wl-icon { stroke: var(--wl-export); }
+#wl-flow [data-node="home"] .wl-icon { stroke: var(--wl-home); }
+#wl-flow [data-node="battery"] .wl-icon { stroke: var(--wl-battery); }
+#wl-flow .wl-fill { fill: var(--wl-battery); stroke: none; transition: width .6s; }
+
+#wl-flow .wl-value { fill: var(--wl-text); font-size: 20px; font-weight: 650; text-anchor: middle; font-variant-numeric: tabular-nums; }
+#wl-flow .wl-sub { fill: var(--wl-muted); font-size: 11.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+
+#wl-flow .wl-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 8px; margin-top: 8px; }
+#wl-flow .wl-tile { background: var(--wl-panel); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#wl-flow .wl-k { font-size: 11px; color: var(--wl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#wl-flow .wl-n { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+</style>
+
+<script>
+(function () {
+  'use strict';
+
+  // Domoticz may inject the page more than once; drive the newest copy and
+  // stop any earlier instance.
+  var roots = document.querySelectorAll('#wl-flow');
+  var root = roots[roots.length - 1];
+  if (!root) return;
+  if (window.__wattledgerFlow) window.__wattledgerFlow.stop();
+
+  var POLL_MS = 5000;
+  // Older readings mean the bridge (or the inverter link) has stopped.
+  var STALE_S = 120;
+  // Flows below this are drawn idle.
+  var MIN_W = 8;
+  var DOTS_PER_FLOW = 4;
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  var css = getComputedStyle(root);
+  function cssVar(name) { return css.getPropertyValue(name).trim(); }
+  var COLOR = {
+    solar: cssVar('--wl-solar'), grid: cssVar('--wl-grid'), exp: cssVar('--wl-export'),
+    battery: cssVar('--wl-battery'), line: cssVar('--wl-line')
+  };
+
+  // Paths run from the first node to the second; a flow with dir = -1 runs
+  // backwards along its path.
+  var FLOWS = [
+    { key: 'solarHome',    d: 'M 360 105 Q 505 105 505 220' },
+    { key: 'solarGrid',    d: 'M 240 105 Q 95 105 95 220' },
+    { key: 'solarBattery', d: 'M 300 165 L 300 395' },
+    { key: 'gridHome',     d: 'M 155 280 L 445 280' },
+    { key: 'batteryHome',  d: 'M 360 455 Q 505 455 505 340' },
+    { key: 'gridBattery',  d: 'M 95 340 Q 95 455 240 455' }
+  ];
+
+  var pathLayer = root.querySelector('[data-paths]');
+  var dotLayer = root.querySelector('[data-dots]');
+  FLOWS.forEach(function (f) {
+    f.path = document.createElementNS(SVG_NS, 'path');
+    f.path.setAttribute('d', f.d);
+    f.path.setAttribute('class', 'wl-path wl-idle');
+    pathLayer.appendChild(f.path);
+    f.len = f.path.getTotalLength();
+    f.dots = [];
+    for (var i = 0; i < DOTS_PER_FLOW; i++) {
+      var c = document.createElementNS(SVG_NS, 'circle');
+      c.setAttribute('class', 'wl-dot');
+      c.setAttribute('r', '4');
+      c.style.opacity = '0';
+      dotLayer.appendChild(c);
+      f.dots.push(c);
+    }
+    f.w = 0; f.dir = 1; f.phase = Math.random();
+  });
+
+  function q(sel) { return root.querySelector(sel); }
+  function setText(sel, text) { var el = q(sel); if (el) el.textContent = text; }
+
+  function fmtW(w) {
+    var a = Math.abs(w);
+    if (a >= 1000) return (a / 1000).toFixed(a >= 10000 ? 1 : 2) + ' kW';
+    return Math.round(a) + ' W';
+  }
+  function fmtKWh(v) { return v == null || isNaN(v) ? '–' : v.toFixed(1); }
+  function num(x) {
+    if (x == null) return NaN;
+    return parseFloat(String(x).replace(',', '.'));
+  }
+
+  // ---- data -----------------------------------------------------------------
+
+  function apiBase() {
+    // Embedded: the page lives at the Domoticz root. Standalone: /templates/X.html.
+    var p = location.pathname;
+    var i = p.indexOf('/templates/');
+    return i >= 0 ? p.slice(0, i + 1) : p.replace(/[^/]*$/, '');
+  }
+
+  function fetchDevices() {
+    if (/[?&]demo\b/.test(location.search)) return Promise.resolve(demoResponse());
+    var url = apiBase() + 'json.htm?type=command&param=getdevices&filter=all&used=all';
+    return fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+      if (r.status === 401) throw new Error('not logged in to Domoticz');
+      if (!r.ok) throw new Error('Domoticz HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  function index(resp) {
+    var byId = {};
+    (resp.result || []).forEach(function (d) { byId[d.ID] = d; });
+    return byId;
+  }
+
+  function parseTime(s) {
+    // Domoticz gives local "YYYY-MM-DD HH:MM:SS".
+    if (!s) return NaN;
+    return new Date(String(s).replace(' ', 'T')).getTime();
+  }
+
+  function read(resp) {
+    var dev = index(resp);
+    function val(id) { var d = dev[id]; return d ? num(d.Data) : NaN; }
+    function today(id) { var d = dev[id]; return d ? num(d.CounterToday) : NaN; }
+    var gridId = dev.dtsu_grid_power ? 'dtsu_grid_power' : 'deye_grid_power';
+    var newest = ['deye_pv_power', 'deye_battery_power', gridId]
+      .map(function (id) { return dev[id] ? parseTime(dev[id].LastUpdate) : NaN; })
+      .filter(function (t) { return !isNaN(t); });
+    return {
+      found: !!dev.deye_pv_power,
+      pv: val('deye_pv_power'),
+      pv1: val('deye_pv1_power'),
+      pv2: val('deye_pv2_power'),
+      battery: val('deye_battery_power'),      // + discharge / - charge
+      soc: val('deye_battery_soc'),
+      batteryTemp: val('deye_battery_temperature'),
+      batteryVoltage: val('deye_battery_voltage'),
+      grid: val(gridId),                       // + import / - export
+      load: val('deye_load_power'),
+      today: {
+        pv: today('deye_pv_energy'),
+        load: today('deye_load_energy'),
+        gridIn: today('dtsu_grid_import_energy'),
+        gridOut: today('dtsu_grid_export_energy'),
+        battIn: today('deye_battery_charge_energy'),
+        battOut: today('deye_battery_discharge_energy')
+      },
+      age: newest.length ? (parseTime(resp.ServerTime) - Math.max.apply(null, newest)) / 1000 : NaN
+    };
+  }
+
+  // Splits the measured powers into source -> sink flows. Solar serves the
+  // home first, then the battery, then the grid; the battery serves the home
+  // before the grid; the grid serves the home before the battery. Inverter
+  // losses mean the totals do not balance exactly.
+  function flows(v) {
+    function z(x) { return isNaN(x) ? 0 : Math.max(0, x); }
+    var pv = z(v.pv), load = z(v.load);
+    var dis = z(v.battery), chg = z(-v.battery);
+    var imp = z(v.grid), exp = z(-v.grid);
+
+    var solarHome = Math.min(pv, load), restLoad = load - solarHome, restPv = pv - solarHome;
+    var solarBattery = Math.min(restPv, chg); restPv -= solarBattery;
+    var restChg = chg - solarBattery;
+    var solarGrid = Math.min(restPv, exp);
+    var batteryHome = Math.min(dis, restLoad); restLoad -= batteryHome;
+    var batteryGrid = Math.min(dis - batteryHome, Math.max(0, exp - solarGrid));
+    var gridHome = Math.min(imp, restLoad);
+    var gridBattery = Math.min(imp - gridHome, restChg);
+
+    return {
+      solarHome: { w: solarHome, color: COLOR.solar },
+      solarGrid: { w: solarGrid, color: COLOR.solar },
+      solarBattery: { w: solarBattery, color: COLOR.solar },
+      gridHome: { w: gridHome, color: COLOR.grid },
+      batteryHome: { w: batteryHome, color: COLOR.battery },
+      gridBattery: gridBattery >= batteryGrid
+        ? { w: gridBattery, color: COLOR.grid }
+        : { w: batteryGrid, color: COLOR.battery, dir: -1 }
+    };
+  }
+
+  // ---- rendering ------------------------------------------------------------
+
+  function render(v) {
+    var stale = !(v.age < STALE_S);
+    var f = flows(v);
+    FLOWS.forEach(function (fl) {
+      var x = f[fl.key];
+      fl.w = stale ? 0 : x.w;
+      fl.dir = x.dir || 1;
+      fl.color = x.color;
+      var active = fl.w >= MIN_W;
+      fl.path.setAttribute('class', 'wl-path' + (active ? '' : ' wl-idle'));
+      fl.path.style.stroke = active ? x.color : COLOR.line;
+      fl.path.style.strokeOpacity = active ? '0.35' : '';
+      var r = 3 + Math.min(2.5, Math.sqrt(fl.w / 1500));
+      fl.dots.forEach(function (c) {
+        c.setAttribute('fill', x.color);
+        c.setAttribute('r', r.toFixed(1));
+        c.style.opacity = active ? '1' : '0';
+      });
+    });
+
+    var pvOn = v.pv >= MIN_W;
+    q('[data-node="solar"]').setAttribute('class', 'wl-node' + (pvOn ? ' wl-on' : ''));
+    setText('[data-v="solar"]', isNaN(v.pv) ? '–' : fmtW(v.pv));
+    // Per-string split only when both strings produce.
+    setText('[data-v="solarSub"]', v.pv1 >= MIN_W && v.pv2 >= MIN_W
+      ? (v.pv1 / 1000).toFixed(1) + ' + ' + (v.pv2 / 1000).toFixed(1) + ' kW'
+      : 'solar');
+
+    var gridNode = q('[data-node="grid"]');
+    var importing = v.grid >= MIN_W, exporting = v.grid <= -MIN_W;
+    gridNode.setAttribute('class', 'wl-node' + (importing ? ' wl-on' : exporting ? ' wl-out' : ''));
+    setText('[data-v="grid"]', isNaN(v.grid) ? '–' : fmtW(v.grid));
+    setText('[data-v="gridSub"]', importing ? 'importing' : exporting ? 'exporting' : 'grid');
+
+    setText('[data-v="home"]', isNaN(v.load) ? '–' : fmtW(v.load));
+
+    setText('[data-v="battery"]', isNaN(v.soc) ? '–' : Math.round(v.soc) + '%');
+    setText('[data-v="batterySub"]', isNaN(v.battery) ? 'battery'
+      : v.battery <= -MIN_W ? 'charging ' + fmtW(v.battery)
+      : v.battery >= MIN_W ? 'discharging ' + fmtW(v.battery) : 'idle');
+    var info = [];
+    if (!isNaN(v.batteryTemp)) info.push(v.batteryTemp.toFixed(1) + ' °C');
+    if (!isNaN(v.batteryVoltage)) info.push(v.batteryVoltage.toFixed(1) + ' V');
+    setText('[data-v="batteryInfo"]', info.join(' · '));
+    var soc = isNaN(v.soc) ? 0 : Math.max(0, Math.min(100, v.soc));
+    var circ = 2 * Math.PI * 60;
+    var ring = q('[data-soc]');
+    ring.style.strokeDasharray = (circ * soc / 100).toFixed(1) + ' ' + circ.toFixed(1);
+    ring.style.stroke = soc < 20 ? '#ff7b72' : soc < 50 ? COLOR.solar : COLOR.exp;
+    q('[data-fill]').setAttribute('width', (22 * soc / 100).toFixed(1));
+
+    var t = v.today;
+    setText('[data-t="solar"]', fmtKWh(t.pv) + ' kWh');
+    setText('[data-t="home"]', fmtKWh(t.load) + ' kWh');
+    setText('[data-t="grid"]', fmtKWh(t.gridIn) + ' / ' + fmtKWh(t.gridOut));
+    setText('[data-t="battery"]', fmtKWh(t.battIn) + ' / ' + fmtKWh(t.battOut));
+    var self = t.load > 0 && !isNaN(t.gridIn) ? Math.max(0, Math.min(1, 1 - t.gridIn / t.load)) : NaN;
+    setText('[data-t="self"]', isNaN(self) ? '–' : Math.round(self * 100) + '%');
+
+    var status = q('[data-status]');
+    if (stale) {
+      status.textContent = isNaN(v.age) ? 'no data yet' : 'no new data for ' + Math.round(v.age / 60) + ' min';
+      status.className = 'wl-status wl-bad';
+    } else {
+      status.textContent = 'live · updated ' + new Date().toLocaleTimeString();
+      status.className = 'wl-status';
+    }
+  }
+
+  function showError(msg) {
+    var status = q('[data-status]');
+    status.textContent = msg;
+    status.className = 'wl-status wl-bad';
+    FLOWS.forEach(function (fl) { fl.w = 0; fl.dots.forEach(function (c) { c.style.opacity = '0'; }); });
+  }
+
+  // ---- animation --------------------------------------------------------------
+
+  var reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var last = 0, raf = 0, timer = 0, stopped = false;
+
+  function frame(now) {
+    if (stopped) return;
+    if (!root.isConnected) { stop(); return; }
+    var dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    last = now;
+    FLOWS.forEach(function (fl) {
+      if (fl.w < MIN_W) return;
+      // px/s: gentle at idle loads, clearly faster at several kW.
+      var speed = reduceMotion ? 0 : 35 + 140 * Math.min(1, Math.sqrt(fl.w / 8000));
+      fl.phase = (fl.phase + speed * dt / fl.len) % 1;
+      fl.dots.forEach(function (c, i) {
+        var s = (fl.phase + i / DOTS_PER_FLOW) % 1;
+        if (fl.dir < 0) s = 1 - s;
+        var p = fl.path.getPointAtLength(s * fl.len);
+        c.setAttribute('cx', p.x.toFixed(1));
+        c.setAttribute('cy', p.y.toFixed(1));
+      });
+    });
+    raf = requestAnimationFrame(frame);
+  }
+
+  function poll() {
+    if (stopped) return;
+    if (!root.isConnected) { stop(); return; }
+    fetchDevices().then(function (resp) {
+      var v = read(resp);
+      if (!v.found) throw new Error('wattledger devices not found in Domoticz');
+      render(v);
+    }).catch(function (e) {
+      showError(e.message || String(e));
+    }).then(function () {
+      if (!stopped) timer = setTimeout(poll, POLL_MS);
+    });
+  }
+
+  function stop() {
+    stopped = true;
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    if (window.__wattledgerFlow && window.__wattledgerFlow.root === root) window.__wattledgerFlow = null;
+  }
+
+  window.__wattledgerFlow = { root: root, stop: stop };
+  poll();
+  raf = requestAnimationFrame(frame);
+
+  // ---- demo data (?demo) --------------------------------------------------------
+
+  function demoResponse() {
+    var t = Date.now() / 1000;
+    var pv = Math.max(0, 3200 + 1800 * Math.sin(t / 20));
+    var load = 650 + 400 * Math.sin(t / 7);
+    var battery = Math.max(-2500, Math.min(2500, load - pv + 300));
+    var grid = load - pv - battery;
+    var now = new Date();
+    function stamp(d) {
+      function p(n) { return String(n).padStart(2, '0'); }
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+        p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+    var ts = stamp(now);
+    function dev(id, data, today) { return { ID: id, Data: String(data), CounterToday: today, LastUpdate: ts }; }
+    return {
+      ServerTime: ts,
+      result: [
+        dev('deye_pv_power', pv.toFixed(0) + ' Watt'),
+        dev('deye_pv1_power', (pv * 0.6).toFixed(0) + ' Watt'),
+        dev('deye_pv2_power', (pv * 0.4).toFixed(0) + ' Watt'),
+        dev('deye_battery_power', battery.toFixed(0) + ' Watt'),
+        dev('deye_battery_soc', '67%'),
+        dev('deye_battery_temperature', '18.5 C'),
+        dev('deye_battery_voltage', '53.16 V'),
+        dev('dtsu_grid_power', grid.toFixed(0) + ' Watt'),
+        dev('deye_load_power', load.toFixed(0) + ' Watt'),
+        dev('deye_pv_energy', '1127.6 kWh', '14.2 kWh'),
+        dev('deye_load_energy', '962.3 kWh', '9.8 kWh'),
+        dev('dtsu_grid_import_energy', '90.9 kWh', '1.4 kWh'),
+        dev('dtsu_grid_export_energy', '0.2 kWh', '3.1 kWh'),
+        dev('deye_battery_charge_energy', '551.7 kWh', '6.0 kWh'),
+        dev('deye_battery_discharge_energy', '574.2 kWh', '1.9 kWh')
+      ]
+    };
+  }
+})();
+</script>
