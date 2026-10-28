@@ -15,12 +15,12 @@
       <span class="wl-status" data-status>connecting…</span>
     </div>
 
-    <svg class="wl-svg" viewBox="0 0 600 560" role="img" aria-label="Energy flow between solar, grid, home and battery">
+    <svg class="wl-svg" viewBox="0 0 800 560" role="img" aria-label="Energy flow between solar, grid, home and battery">
       <g data-paths></g>
       <g data-dots></g>
 
       <!-- Solar -->
-      <g class="wl-node" data-node="solar" transform="translate(300 105)">
+      <g class="wl-node" data-node="solar" transform="translate(400 105)">
         <circle class="wl-ring-bg" r="60"></circle>
         <g class="wl-icon" transform="translate(0 -30)">
           <circle r="7"></circle>
@@ -31,7 +31,7 @@
       </g>
 
       <!-- Grid -->
-      <g class="wl-node" data-node="grid" transform="translate(95 280)">
+      <g class="wl-node" data-node="grid" transform="translate(120 280)">
         <circle class="wl-ring-bg" r="60"></circle>
         <g class="wl-icon" transform="translate(0 -30)">
           <path d="M-8 14L-3-14h6L8 14M-6 2h12M-4-6h8M-13-9h26M-9-14h18"></path>
@@ -41,7 +41,7 @@
       </g>
 
       <!-- Home -->
-      <g class="wl-node" data-node="home" transform="translate(505 280)">
+      <g class="wl-node" data-node="home" transform="translate(680 280)">
         <circle class="wl-ring-bg" r="60"></circle>
         <g class="wl-icon" transform="translate(0 -30)">
           <path d="M-13 0L0-12 13 0M-9-3v15h18V-3M-3 12V4h6v8"></path>
@@ -50,8 +50,20 @@
         <text class="wl-sub" y="26" data-v="homeSub">home</text>
       </g>
 
+      <!-- Inverter own use: what goes in (solar + battery + grid) minus what
+           the home, battery and grid take out -->
+      <g class="wl-node" data-node="inverter" transform="translate(700 440)">
+        <rect class="wl-ring-bg" x="-50" y="-38" width="100" height="76" rx="12"></rect>
+        <g class="wl-icon" transform="translate(0 -19) scale(0.8)">
+          <rect x="-11" y="-9" width="22" height="18" rx="2"></rect>
+          <path d="M-11 9L11-9M-8-5h5M-8-2h5M3 4q1.5-2 3 0t3 0"></path>
+        </g>
+        <text class="wl-value wl-small" y="9" data-v="inverter">–</text>
+        <text class="wl-sub" y="26">inverter</text>
+      </g>
+
       <!-- Battery: the outer ring shows the state of charge -->
-      <g class="wl-node" data-node="battery" transform="translate(300 455)">
+      <g class="wl-node" data-node="battery" transform="translate(400 455)">
         <circle class="wl-ring-bg" r="60"></circle>
         <circle class="wl-soc" r="60" data-soc transform="rotate(-90)"></circle>
         <g class="wl-icon" transform="translate(0 -30)">
@@ -87,12 +99,13 @@
   --wl-export: #3fb950;
   --wl-battery: #c678dd;
   --wl-home: #2ec4b6;
+  --wl-inverter: #f0883e;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--wl-text);
   padding: 12px 0;
 }
 #wl-flow .wl-card {
-  max-width: 640px;
+  max-width: 900px;
   margin: 0 auto;
   background: var(--wl-bg);
   border-radius: 14px;
@@ -114,6 +127,8 @@
 #wl-flow [data-node="grid"].wl-on .wl-ring-bg { stroke: var(--wl-grid); }
 #wl-flow [data-node="grid"].wl-out .wl-ring-bg { stroke: var(--wl-export); }
 #wl-flow [data-node="home"] .wl-ring-bg { stroke: var(--wl-home); }
+#wl-flow [data-node="inverter"].wl-on .wl-ring-bg { stroke: var(--wl-inverter); }
+#wl-flow [data-node="inverter"].wl-on .wl-icon { stroke: var(--wl-inverter); }
 #wl-flow .wl-soc { fill: none; stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray .6s, stroke .6s; }
 
 #wl-flow .wl-icon { fill: none; stroke: var(--wl-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -125,7 +140,8 @@
 #wl-flow .wl-fill { fill: var(--wl-battery); stroke: none; transition: width .6s; }
 
 #wl-flow .wl-value { fill: var(--wl-text); font-size: 20px; font-weight: 650; text-anchor: middle; font-variant-numeric: tabular-nums; }
-#wl-flow .wl-sub { fill: var(--wl-muted); font-size: 11.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+#wl-flow .wl-value.wl-small { font-size: 16px; }
+#wl-flow .wl-sub {fill: var(--wl-muted); font-size: 11.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
 
 #wl-flow .wl-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 8px; margin-top: 8px; }
 #wl-flow .wl-tile { background: var(--wl-panel); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -156,18 +172,21 @@
   function cssVar(name) { return css.getPropertyValue(name).trim(); }
   var COLOR = {
     solar: cssVar('--wl-solar'), grid: cssVar('--wl-grid'), exp: cssVar('--wl-export'),
-    battery: cssVar('--wl-battery'), line: cssVar('--wl-line')
+    battery: cssVar('--wl-battery'), inverter: cssVar('--wl-inverter'), line: cssVar('--wl-line')
   };
 
   // Paths run from the first node to the second; a flow with dir = -1 runs
   // backwards along its path.
   var FLOWS = [
-    { key: 'solarHome',    d: 'M 360 105 Q 505 105 505 220' },
-    { key: 'solarGrid',    d: 'M 240 105 Q 95 105 95 220' },
-    { key: 'solarBattery', d: 'M 300 165 L 300 395' },
-    { key: 'gridHome',     d: 'M 155 280 L 445 280' },
-    { key: 'batteryHome',  d: 'M 360 455 Q 505 455 505 340' },
-    { key: 'gridBattery',  d: 'M 95 340 Q 95 455 240 455' }
+    { key: 'solarHome',    d: 'M 460 105 Q 680 105 680 220' },
+    { key: 'solarGrid',    d: 'M 340 105 Q 120 105 120 220' },
+    { key: 'solarBattery', d: 'M 400 165 L 400 395' },
+    { key: 'gridHome',     d: 'M 180 280 L 620 280' },
+    // Enters Home at its lower left, leaving the bottom for the inverter link.
+    { key: 'batteryHome',  d: 'M 460 455 Q 638 455 638 322' },
+    { key: 'gridBattery',  d: 'M 120 340 Q 120 455 340 455' },
+    // The inverter's own use reaches it through the home side.
+    { key: 'homeInverter', d: 'M 700 337 L 700 402' }
   ];
 
   var pathLayer = root.querySelector('[data-paths]');
@@ -266,13 +285,23 @@
     };
   }
 
-  // Splits the measured powers into source -> sink flows. Solar serves the
-  // home first, then the battery, then the grid; the battery serves the home
-  // before the grid; the grid serves the home before the battery. Inverter
-  // losses mean the totals do not balance exactly.
+  // The inverter's own use and losses: power in (solar, battery discharge,
+  // grid import) minus power out (home, battery charge, grid export). The
+  // Deye load figure leaves it out, typically 70-170 W. NaN without readings.
+  function inverterUse(v) {
+    if (isNaN(v.pv) || isNaN(v.grid) || isNaN(v.load)) return NaN;
+    var batt = isNaN(v.battery) ? 0 : v.battery;
+    return Math.max(0, v.pv + batt + v.grid - v.load);
+  }
+
+  // Splits the measured powers into source -> sink flows. The home side
+  // consumes the home load plus the inverter's own use. Solar serves it
+  // first, then the battery, then the grid; the battery serves it before the
+  // grid; the grid serves it before the battery.
   function flows(v) {
     function z(x) { return isNaN(x) ? 0 : Math.max(0, x); }
-    var pv = z(v.pv), load = z(v.load);
+    var own = z(inverterUse(v));
+    var pv = z(v.pv), load = z(v.load) + own;
     var dis = z(v.battery), chg = z(-v.battery);
     var imp = z(v.grid), exp = z(-v.grid);
 
@@ -291,6 +320,7 @@
       solarBattery: { w: solarBattery, color: COLOR.solar },
       gridHome: { w: gridHome, color: COLOR.grid },
       batteryHome: { w: batteryHome, color: COLOR.battery },
+      homeInverter: { w: own, color: COLOR.inverter },
       gridBattery: gridBattery >= batteryGrid
         ? { w: gridBattery, color: COLOR.grid }
         : { w: batteryGrid, color: COLOR.battery, dir: -1 }
@@ -334,6 +364,10 @@
     setText('[data-v="gridSub"]', importing ? 'importing' : exporting ? 'exporting' : 'grid');
 
     setText('[data-v="home"]', isNaN(v.load) ? '–' : fmtW(v.load));
+
+    var own = inverterUse(v);
+    q('[data-node="inverter"]').setAttribute('class', 'wl-node' + (!stale && own >= MIN_W ? ' wl-on' : ''));
+    setText('[data-v="inverter"]', isNaN(own) ? '–' : fmtW(own));
 
     setText('[data-v="battery"]', isNaN(v.soc) ? '–' : Math.round(v.soc) + '%');
     setText('[data-v="batterySub"]', isNaN(v.battery) ? 'battery'
@@ -433,7 +467,8 @@
     var pv = Math.max(0, 3200 + 1800 * Math.sin(t / 20));
     var load = 650 + 400 * Math.sin(t / 7);
     var battery = Math.max(-2500, Math.min(2500, load - pv + 300));
-    var grid = load - pv - battery;
+    var inverter = 110 + 30 * Math.sin(t / 11);
+    var grid = load + inverter - pv - battery;
     var now = new Date();
     function stamp(d) {
       function p(n) { return String(n).padStart(2, '0'); }
