@@ -1,9 +1,10 @@
-//! Minimal Modbus RTU master that can only read holding registers.
+//! Minimal Modbus RTU master: read holding registers (function code 3) and
+//! write multiple registers (16).
 //!
-//! General-purpose Modbus crates all ship write functions. This bridge must
-//! be physically unable to change inverter settings, so it carries its own
-//! client that knows exactly one function code (3). Writing is left to a
-//! separate binary.
+//! General-purpose Modbus crates ship every write function. This bridge
+//! carries its own client so that the only way to change the inverter is
+//! function 16, used solely by `bus::write` for registers a device map lists
+//! as `[[setting]]`.
 
 mod crc;
 mod frame;
@@ -43,6 +44,8 @@ pub enum RtuError {
     Exception(u8),
     #[error("invalid request: {0}")]
     InvalidRequest(&'static str),
+    #[error("write echo does not match the request (start {start}, count {count})")]
+    WriteEcho { start: u16, count: u16 },
 }
 
 fn exception_name(code: u8) -> &'static str {
@@ -104,13 +107,40 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Client<T> {
         count: u16,
     ) -> Result<Vec<u16>, RtuError> {
         let request = frame::read_holding_registers_request(slave, start, count)?;
+        self.transact(&request, slave, |frame| {
+            frame::parse_response(slave, count, frame)
+        })
+        .await
+    }
+
+    /// Function code 16. Only `bus::write` may call this.
+    pub async fn write_registers(
+        &mut self,
+        slave: u8,
+        start: u16,
+        values: &[u16],
+    ) -> Result<(), RtuError> {
+        let request = frame::write_registers_request(slave, start, values)?;
+        let count = values.len() as u16;
+        self.transact(&request, slave, |frame| {
+            frame::parse_write_response(slave, start, count, frame)
+        })
+        .await
+    }
+
+    async fn transact<R>(
+        &mut self,
+        request: &[u8],
+        slave: u8,
+        parse: impl FnOnce(&[u8]) -> Result<R, RtuError>,
+    ) -> Result<R, RtuError> {
         time::sleep_until(self.ready_at).await;
         if self.needs_drain {
             self.discard_input().await;
             self.needs_drain = false;
         }
-        let result = match time::timeout(self.timeout, self.exchange(&request, slave)).await {
-            Ok(response) => response.and_then(|frame| frame::parse_response(slave, count, &frame)),
+        let result = match time::timeout(self.timeout, self.exchange(request, slave)).await {
+            Ok(response) => response.and_then(|frame| parse(&frame)),
             Err(_elapsed) => Err(RtuError::Timeout),
         };
         // A complete exception frame leaves the line clean; anything else may not.
@@ -256,11 +286,44 @@ mod tests {
         assert!(matches!(err, RtuError::Io(_)), "{err}");
     }
 
-    /// Guards the read-only rule: no Modbus write function code or write
-    /// helper may appear in this crate, and no general Modbus client crate may
-    /// be pulled in.
+    #[tokio::test]
+    async fn writes_registers() {
+        let (mut client, mut dev) = client();
+        let device = tokio::spawn(async move {
+            let mut req = [0u8; 11];
+            dev.read_exact(&mut req).await.unwrap();
+            assert_eq!(
+                &req[..9],
+                &[0x02, 0x10, 0x00, 0x8F, 0x00, 0x01, 0x02, 0x01, 0x90]
+            );
+            dev.write_all(&with_crc(&[0x02, 0x10, 0x00, 0x8F, 0x00, 0x01]))
+                .await
+                .unwrap();
+            dev
+        });
+        client.write_registers(2, 143, &[400]).await.unwrap();
+        device.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_exception_is_reported() {
+        let (mut client, mut dev) = client();
+        let device = tokio::spawn(async move {
+            let mut req = [0u8; 11];
+            dev.read_exact(&mut req).await.unwrap();
+            dev.write_all(&with_crc(&[0x02, 0x90, 0x02])).await.unwrap();
+            dev
+        });
+        let err = client.write_registers(2, 143, &[400]).await.unwrap_err();
+        assert!(matches!(err, RtuError::Exception(2)), "{err}");
+        device.await.unwrap();
+    }
+
+    /// Guards the write rule: function code 16 is the only write the client
+    /// knows (Deye accepts nothing else), and no general Modbus client crate
+    /// with its full set of write functions may be pulled in.
     #[test]
-    fn crate_is_read_only() {
+    fn only_write_multiple_registers() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/rtu");
         let sources = [
             include_str!("mod.rs"),
@@ -269,15 +332,22 @@ mod tests {
         ];
         let forbidden = [
             "write_single",
-            "write_multiple",
             "WRITE_SINGLE",
-            "WRITE_MULTIPLE",
+            "write_coil",
+            "WRITE_COIL",
             "mask_write",
+            "MASK_WRITE",
             "read_write_multiple",
+            "READ_WRITE_MULTIPLE",
+            "0x05",
+            "0x06",
+            "0x0F",
+            "0x16",
+            "0x17",
         ];
         for (i, src) in sources.iter().enumerate() {
-            // Skip this test's own list of forbidden words.
-            let code = src.split("fn crate_is_read_only").next().unwrap_or(src);
+            // Skip the test modules: they contain frames and this list.
+            let code = src.split("#[cfg(test)]").next().unwrap_or(src);
             for word in forbidden {
                 assert!(!code.contains(word), "{dir}: source #{i} contains {word:?}");
             }

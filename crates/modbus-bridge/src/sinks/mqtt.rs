@@ -6,14 +6,15 @@ use registers::{DeviceMap, format_value};
 use rumqttc::{
     AsyncClient, ConnectReturnCode, Event, EventLoop, LastWill, MqttOptions, Outgoing, Packet, QoS,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{self, Instant};
 use tracing::{debug, info, warn};
 
-use super::{discovery, domoticz_p1};
+use super::{commands, discovery, domoticz_p1};
 use crate::config::MqttConfig;
 use crate::reading::Reading;
 use crate::throttle::ErrorLog;
+use crate::write::Job;
 
 /// Requests buffered inside rumqttc; beyond this, publishes are dropped.
 const REQUEST_CAPACITY: usize = 256;
@@ -24,6 +25,10 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 /// polling would publish every 12 s.
 const INTERVAL_SLACK: Duration = Duration::from_millis(500);
 
+/// A command waits at most this long for its bus (a poll cycle plus the
+/// writes themselves).
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+
 const ONLINE: &str = "online";
 const OFFLINE: &str = "offline";
 
@@ -33,17 +38,32 @@ enum ConnEvent {
     Disconnected,
     /// Home Assistant or Domoticz (re)started and wants discovery again.
     HomeAssistantOnline,
+    /// A write command for one device.
+    Command {
+        device: String,
+        payload: Vec<u8>,
+    },
 }
 
 pub struct MqttSink {
     cfg: MqttConfig,
     devices: Vec<(Arc<DeviceMap>, Duration)>,
+    /// Bus job queue per device id that accepts write commands.
+    commands: HashMap<String, mpsc::Sender<Job>>,
 }
 
 impl MqttSink {
     /// `devices` are all polled devices with their minimum publish interval.
-    pub fn new(cfg: MqttConfig, devices: Vec<(Arc<DeviceMap>, Duration)>) -> Self {
-        Self { cfg, devices }
+    pub fn new(
+        cfg: MqttConfig,
+        devices: Vec<(Arc<DeviceMap>, Duration)>,
+        commands: HashMap<String, mpsc::Sender<Job>>,
+    ) -> Self {
+        Self {
+            cfg,
+            devices,
+            commands,
+        }
     }
 
     /// Runs until `readings` is closed, then marks the bridge offline.
@@ -71,6 +91,7 @@ impl MqttSink {
             eventloop,
             events_tx,
             discovery::birth_topic(&self.cfg),
+            self.cfg.topic_prefix.clone(),
         ));
 
         let intervals: HashMap<&str, Duration> = self
@@ -117,6 +138,9 @@ impl MqttSink {
                         }
                     }
                     Some(ConnEvent::Disconnected) => connected = false,
+                    Some(ConnEvent::Command { device, payload }) => {
+                        self.dispatch_command(&client, device, &payload);
+                    }
                     None => break,
                 },
             }
@@ -143,10 +167,66 @@ impl MqttSink {
         }
     }
 
+    /// Hands a command to its bus and publishes the answer when it comes.
+    fn dispatch_command(&self, client: &AsyncClient, device: String, payload: &[u8]) {
+        let topic = commands::result_topic(&self.cfg.topic_prefix, &device);
+        let publish = |client: AsyncClient, result| async move {
+            let json = serde_json::to_string(&result).unwrap_or_default();
+            if let Err(e) = client.publish(&topic, QoS::AtLeastOnce, false, json).await {
+                warn!(topic = %topic, error = %e, "cannot publish command result");
+            }
+        };
+        let command = match commands::decode(payload) {
+            Ok(c) => c,
+            Err((Some(id), err)) => {
+                warn!(device = %device, id = %id, error = %err, "refusing command");
+                tokio::spawn(publish(client.clone(), commands::error_result(id, err)));
+                return;
+            }
+            Err((None, err)) => {
+                warn!(device = %device, error = %err, "ignoring command without an id");
+                return;
+            }
+        };
+        let id = command.id.clone();
+        let Some(queue) = self.commands.get(&device) else {
+            let err = format!("device {device:?} has no writable settings");
+            tokio::spawn(publish(client.clone(), commands::error_result(id, err)));
+            return;
+        };
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let job = Job {
+            device: device.clone(),
+            command,
+            reply: reply_tx,
+        };
+        if queue.try_send(job).is_err() {
+            let err = "bus is busy with other commands".to_owned();
+            tokio::spawn(publish(client.clone(), commands::error_result(id, err)));
+            return;
+        }
+        info!(device = %device, id = %id, "command received");
+        let client = client.clone();
+        tokio::spawn(async move {
+            let result = match time::timeout(COMMAND_TIMEOUT, reply_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => commands::error_result(id, "bus stopped".into()),
+                Err(_) => commands::error_result(id, "bus did not answer in time".into()),
+            };
+            publish(client, result).await;
+        });
+    }
+
     fn announce(&self, client: &AsyncClient, availability: &str, drops: &mut ErrorLog) {
         let birth = discovery::birth_topic(&self.cfg);
         if let Err(e) = client.try_subscribe(&birth, QoS::AtLeastOnce) {
             warn!(topic = %birth, error = %e, "cannot subscribe");
+        }
+        for device in self.commands.keys() {
+            let topic = commands::command_topic(&self.cfg.topic_prefix, device);
+            if let Err(e) = client.try_subscribe(&topic, QoS::AtLeastOnce) {
+                warn!(topic = %topic, error = %e, "cannot subscribe");
+            }
         }
         self.publish_discovery(client, drops);
         try_publish(
@@ -220,7 +300,12 @@ fn try_publish(
 
 /// Polls the rumqttc event loop, which also performs reconnects, and reports
 /// connection changes. Ends after our own DISCONNECT has been sent.
-async fn drive(mut eventloop: EventLoop, events: mpsc::Sender<ConnEvent>, birth_topic: String) {
+async fn drive(
+    mut eventloop: EventLoop,
+    events: mpsc::Sender<ConnEvent>,
+    birth_topic: String,
+    topic_prefix: String,
+) {
     let mut backoff = RECONNECT_BACKOFF_MIN;
     let mut errors = ErrorLog::new();
     loop {
@@ -234,6 +319,16 @@ async fn drive(mut eventloop: EventLoop, events: mpsc::Sender<ConnEvent>, birth_
                 if p.topic == birth_topic && p.payload.as_ref() == ONLINE.as_bytes() =>
             {
                 let _ = events.send(ConnEvent::HomeAssistantOnline).await;
+            }
+            Ok(Event::Incoming(Packet::Publish(p))) => {
+                if let Some(device) = commands::device_of(&topic_prefix, &p.topic) {
+                    let _ = events
+                        .send(ConnEvent::Command {
+                            device: device.to_owned(),
+                            payload: p.payload.to_vec(),
+                        })
+                        .await;
+                }
             }
             Ok(Event::Outgoing(Outgoing::Disconnect)) => return,
             Ok(_) => {}

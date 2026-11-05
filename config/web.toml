@@ -1,0 +1,35 @@
+# wattledger web server configuration.
+# Durations use humantime syntax: "500ms", "2s", "15m".
+
+# Address of the web pages. There is no login: keep it on the home network.
+listen = "0.0.0.0:8080"
+
+# PostgreSQL over the local Unix socket; install.sh creates the role and
+# database "wattledger" with peer authentication for the service user.
+database_url = "postgres:///wattledger?host=/var/run/postgresql"
+
+# VictoriaMetrics (history for the charts).
+victoria_url = "http://127.0.0.1:8428"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "wattledger-web"
+# username = ""
+# password = ""
+topic_prefix = "wattledger"   # must match bridge.toml
+inverter = "deye"             # device id with the export [[setting]]s
+# How long to wait for the bridge to answer a command.
+command_timeout = "60s"
+
+[prices]
+# PSE RCE prices (15-minute slots, PLN/MWh), fetched with curl.
+url = "https://api.raporty.pse.pl/api/rce-pln"
+# Days of history to fill in; the charts' export earnings need them.
+backfill_days = 90
+# How often missing days (and tomorrow, from 13:00) are looked for.
+refresh = "15m"
+
+[control]
+# How often export plans are checked.
+interval = "5s"

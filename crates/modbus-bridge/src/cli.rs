@@ -7,7 +7,7 @@ pub const DEFAULT_CONFIG: &str = "/etc/wattledger/bridge.toml";
 const USAGE: &str = "\
 Usage: modbus-bridge [OPTIONS]
 
-Reads Modbus RTU devices (read-only) and publishes to MQTT and InfluxDB line protocol.
+Reads Modbus RTU devices (writes only [[setting]] registers, on request) and publishes to MQTT and InfluxDB line protocol.
 
 Options:
   -c, --config <PATH>  Main config file [default: /etc/wattledger/bridge.toml]

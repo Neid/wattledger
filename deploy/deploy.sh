@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Builds the bridge for the Pi and ships it. Run it on the build machine from
+# Builds the bridge and the web server for the Pi and ships them. Run it on the build machine from
 # anywhere in the repository:
 #
 #   deploy/deploy.sh [user@host]      # default: $WATTLEDGER_PI or pi@raspberrypi.local
 #   deploy/deploy.sh --no-build [user@host]
 #
-# It copies the binary, config/, the systemd units, the USB reset helper and
-# install.sh to ~/wattledger on the Pi, and the Domoticz energy flow page to
+# It copies both binaries, config/, the systemd units, the USB reset helper
+# and install.sh to ~/wattledger on the Pi, and the Domoticz energy flow page to
 # ~/domoticz/www/templates (set WATTLEDGER_DOMOTICZ_TEMPLATES for another
 # place; skipped if it is missing). If the bridge is already installed there, it then
-# runs "install.sh --bridge-only", which installs the binary, unit and config
-# and restarts the service (sudo may ask for your password). The first time,
+# runs "install.sh --bridge-only", which installs the binaries, units and
+# config and restarts the services (sudo may ask for your password). The first time,
 # run the full install on the Pi instead: sudo ~/wattledger/install.sh
 
 set -euo pipefail
@@ -34,16 +34,19 @@ done
 
 cd "$(dirname "$(readlink -f "$0")")/.."
 bin="target/$TARGET/release/modbus-bridge"
+web_bin="target/$TARGET/release/wattledger-web"
 
 if $build; then
-    log "Building $bin"
-    cargo build --release --target "$TARGET" -p modbus-bridge
+    log "Building $bin and $web_bin"
+    cargo build --release --target "$TARGET" -p modbus-bridge -p web
 fi
-[[ -f $bin ]] || die "$bin not found; build it or drop --no-build"
+for f in "$bin" "$web_bin"; do
+    [[ -f $f ]] || die "$f not found; build it or drop --no-build"
+done
 
 log "Copying files to $pi:~/$REMOTE_DIR"
 ssh "$pi" "mkdir -p $REMOTE_DIR"
-rsync -az "$bin" deploy/install.sh deploy/wattledger-bridge.service \
+rsync -az "$bin" "$web_bin" deploy/install.sh deploy/wattledger-bridge.service deploy/wattledger-web.service \
     deploy/wattledger-usb-reset deploy/wattledger-usb-reset.path deploy/wattledger-usb-reset.service \
     "$pi:$REMOTE_DIR/"
 rsync -az --delete config/ "$pi:$REMOTE_DIR/config/"

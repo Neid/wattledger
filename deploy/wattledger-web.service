@@ -1,0 +1,42 @@
+[Unit]
+Description=wattledger web server (energy flow, history, RCE prices, export plans)
+After=network-online.target postgresql.service mosquitto.service victoriametrics.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wattledger-web --config /etc/wattledger/web.toml
+Environment=WATTLEDGER_LOG=info
+Restart=always
+RestartSec=5
+# An export step in progress (one bridge command, up to command_timeout)
+# finishes before the process exits.
+TimeoutStopSec=80
+
+# A fixed system user: PostgreSQL's peer authentication maps it to the
+# "wattledger" database role.
+User=wattledger
+Group=wattledger
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

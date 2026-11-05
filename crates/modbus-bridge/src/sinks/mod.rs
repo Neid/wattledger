@@ -1,6 +1,7 @@
 //! Consumers of readings. Each runs in its own task behind a bounded channel
 //! (see [`crate::reading::Fanout`]) so none of them can stall polling.
 
+pub mod commands;
 mod discovery;
 mod domoticz_p1;
 pub mod influx;

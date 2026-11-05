@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::decode::decode_raw;
+use crate::setting::Setting;
 
 /// Modbus limits one read-holding-registers request to 125 registers.
 pub const MAX_BLOCK_REGISTERS: u16 = 125;
@@ -109,6 +110,12 @@ pub enum MapError {
     MissingWordOrder { key: String },
     #[error("{key:?}: {reason}")]
     InvalidField { key: String, reason: &'static str },
+    #[error("settings {first:?} and {second:?} both use address {address}")]
+    DuplicateAddress {
+        first: String,
+        second: String,
+        address: u16,
+    },
     #[error("derived {key:?}: input {input:?} is not defined above it")]
     UnknownInput { key: String, input: String },
     #[error("derived {key:?}: {op} takes {expected} input(s), got {got}")]
@@ -130,6 +137,24 @@ struct MapFile {
     registers: Vec<RegisterEntry>,
     #[serde(default)]
     derived: Vec<DerivedEntry>,
+    #[serde(default, rename = "setting")]
+    settings: Vec<SettingEntry>,
+}
+
+/// A writable u16 register. The range is mandatory: nothing may be written
+/// without explicit bounds.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingEntry {
+    key: String,
+    name: String,
+    address: u16,
+    #[serde(default = "one")]
+    scale: f64,
+    unit: Option<String>,
+    range: [f64; 2],
+    #[serde(default)]
+    verified: bool,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +292,8 @@ pub struct DeviceMap {
     pub blocks: Vec<Block>,
     /// Registers first, then derived values, both in file order.
     pub sensors: Vec<Sensor>,
+    /// Registers that may be written, in file order.
+    pub settings: Vec<Setting>,
 }
 
 impl DeviceMap {
@@ -277,6 +304,10 @@ impl DeviceMap {
 
     pub fn sensor_index(&self, key: &str) -> Option<usize> {
         self.sensors.iter().position(|s| s.key == key)
+    }
+
+    pub fn setting_index(&self, key: &str) -> Option<usize> {
+        self.settings.iter().position(|s| s.key == key)
     }
 
     /// Unscaled value of a register sensor, or `None` for derived sensors and
@@ -435,6 +466,42 @@ fn compile(file: MapFile) -> Result<DeviceMap, MapError> {
         )?;
     }
 
+    let mut settings: Vec<Setting> = Vec::with_capacity(file.settings.len());
+    for entry in file.settings {
+        check_identifier(&entry.key)?;
+        if index.contains_key(&entry.key) || settings.iter().any(|s| s.key == entry.key) {
+            return Err(MapError::DuplicateKey(entry.key));
+        }
+        if let Some(other) = settings.iter().find(|s| s.address == entry.address) {
+            return Err(MapError::DuplicateAddress {
+                first: other.key.clone(),
+                second: entry.key,
+                address: entry.address,
+            });
+        }
+        if !entry.scale.is_finite() || entry.scale <= 0.0 {
+            return Err(invalid(&entry.key, "scale must be a finite number > 0"));
+        }
+        let Some(range) = check_range(&entry.key, Some(entry.range))? else {
+            unreachable!("a given range is checked, not dropped");
+        };
+        if range.0 < 0.0 || range.1 / entry.scale > f64::from(u16::MAX) {
+            return Err(invalid(
+                &entry.key,
+                "range must fit in an unsigned 16-bit register after scaling",
+            ));
+        }
+        settings.push(Setting {
+            key: entry.key,
+            name: entry.name,
+            address: entry.address,
+            scale: entry.scale,
+            unit: entry.unit,
+            range,
+            verified: entry.verified,
+        });
+    }
+
     Ok(DeviceMap {
         device: DeviceInfo {
             id,
@@ -444,6 +511,7 @@ fn compile(file: MapFile) -> Result<DeviceMap, MapError> {
         },
         blocks,
         sensors,
+        settings,
     })
 }
 
@@ -725,6 +793,103 @@ mod tests {
         assert!(only_a.verified);
         assert!(!a_and_b.verified);
         assert_eq!(a_and_b.precision, 2);
+    }
+
+    #[test]
+    fn parses_settings() {
+        let m = map(r#"
+            [[setting]]
+            key = "work_mode"
+            name = "Work mode"
+            address = 142
+            range = [0, 2]
+
+            [[setting]]
+            key = "max_sell_power"
+            name = "Max sell power"
+            address = 143
+            scale = 10
+            unit = "W"
+            range = [0, 12000]
+            verified = true
+        "#)
+        .unwrap();
+        assert_eq!(m.settings.len(), 2);
+        let mode = &m.settings[m.setting_index("work_mode").unwrap()];
+        assert_eq!(mode.address, 142);
+        assert_eq!(mode.scale, 1.0);
+        assert_eq!(mode.range, (0.0, 2.0));
+        assert!(!mode.verified, "settings default to unverified");
+        let power = &m.settings[1];
+        assert_eq!(power.encode(4000.0), Ok(400));
+        assert!(power.verified);
+        assert_eq!(power.unit.as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn settings_need_a_range() {
+        let err = map(r#"
+            [[setting]]
+            key = "work_mode"
+            name = "Work mode"
+            address = 142
+        "#)
+        .unwrap_err();
+        assert!(matches!(err, MapError::Parse(_)), "{err}");
+    }
+
+    #[test]
+    fn settings_reject_bad_scale_and_range() {
+        for (body, what) in [
+            ("scale = 0\nrange = [0, 1]", "zero scale"),
+            ("scale = -1\nrange = [0, 1]", "negative scale"),
+            ("range = [5, 1]", "inverted range"),
+            ("range = [-1, 1]", "negative values do not fit u16"),
+        ] {
+            let text = format!("[[setting]]\nkey = \"s\"\nname = \"S\"\naddress = 1\n{body}\n");
+            assert!(map(&text).is_err(), "{what} accepted");
+        }
+    }
+
+    #[test]
+    fn setting_keys_are_unique_across_sensors_and_settings() {
+        let err = map(r#"
+            [[register]]
+            key = "a"
+            name = "A"
+            address = 100
+            type = "u16"
+
+            [[setting]]
+            key = "a"
+            name = "A"
+            address = 142
+            range = [0, 1]
+        "#)
+        .unwrap_err();
+        assert!(
+            matches!(err, MapError::DuplicateKey(ref k) if k == "a"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn settings_may_not_share_an_address() {
+        let err = map(r#"
+            [[setting]]
+            key = "a"
+            name = "A"
+            address = 142
+            range = [0, 1]
+
+            [[setting]]
+            key = "b"
+            name = "B"
+            address = 142
+            range = [0, 1]
+        "#)
+        .unwrap_err();
+        assert!(format!("{err}").contains("address 142"), "{err}");
     }
 
     #[test]

@@ -7,6 +7,8 @@ use anyhow::{Context, bail, ensure};
 use registers::DeviceMap;
 use serde::Deserialize;
 
+pub use crate::write::WriteMode;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
@@ -16,6 +18,15 @@ struct ConfigFile {
     mqtt: MqttConfig,
     #[serde(default)]
     influx: InfluxConfig,
+    #[serde(default)]
+    writes: WritesConfig,
+}
+
+/// Writing `[[setting]]` registers on request over MQTT.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct WritesConfig {
+    pub mode: WriteMode,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,6 +192,7 @@ pub struct Setup {
     pub buses: Vec<BusSetup>,
     pub mqtt: MqttConfig,
     pub influx: InfluxConfig,
+    pub writes: WritesConfig,
 }
 
 #[derive(Debug)]
@@ -208,6 +220,10 @@ pub fn load(path: &Path) -> anyhow::Result<Setup> {
     ensure!(!file.buses.is_empty(), "no [[bus]] configured");
     validate_topic("mqtt.topic_prefix", &file.mqtt.topic_prefix)?;
     validate_topic("mqtt.discovery_prefix", &file.mqtt.discovery_prefix)?;
+    ensure!(
+        file.writes.mode == WriteMode::Off || file.mqtt.enabled,
+        "[writes] needs MQTT: commands arrive over MQTT, so enable [mqtt] or set writes.mode = \"off\""
+    );
     if file.influx.enabled {
         ensure!(
             file.influx.url.starts_with("http://"),
@@ -309,6 +325,7 @@ pub fn load(path: &Path) -> anyhow::Result<Setup> {
         buses,
         mqtt: file.mqtt,
         influx: file.influx,
+        writes: file.writes,
     })
 }
 
@@ -372,6 +389,30 @@ mod tests {
         assert_eq!(setup.buses[0].config.poll_interval, Duration::from_secs(2));
         assert_eq!(setup.buses[1].config.poll_interval, Duration::from_secs(5));
         assert!(setup.buses.iter().all(|b| b.config.usb_reset_after.is_some()));
+        assert_eq!(
+            setup.writes.mode,
+            WriteMode::DryRun,
+            "the shipped config must never write until registers are verified"
+        );
+    }
+
+    #[test]
+    fn writes_default_to_off() {
+        let setup = load_with("writes-default", "").unwrap();
+        assert_eq!(setup.writes.mode, WriteMode::Off);
+        let setup = load_with("writes-on", "[writes]\nmode = \"on\"").unwrap();
+        assert_eq!(setup.writes.mode, WriteMode::On);
+        assert!(load_with("writes-bad", "[writes]\nmode = \"yes\"").is_err());
+    }
+
+    #[test]
+    fn writes_need_mqtt() {
+        let err = load_with(
+            "writes-no-mqtt",
+            "[mqtt]\nenabled = false\n[writes]\nmode = \"dry_run\"",
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("MQTT"), "{err:#}");
     }
 
     /// Loads a config with one DTSU bus plus `extra`.

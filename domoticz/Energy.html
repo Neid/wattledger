@@ -7,6 +7,10 @@
   (deye_pv_power, dtsu_grid_power, ...), so no idx numbers are needed.
 
   Open it standalone with ?demo to see it with made-up values.
+
+  The wattledger web server embeds this same file in its "Energy flow" tab
+  and sets window.WATTLEDGER_LIVE_URL; the page then reads the same JSON
+  shape from there instead of from Domoticz.
 -->
 <div id="wl-flow">
   <div class="wl-card">
@@ -234,6 +238,12 @@
 
   function fetchDevices() {
     if (/[?&]demo\b/.test(location.search)) return Promise.resolve(demoResponse());
+    if (window.WATTLEDGER_LIVE_URL) {
+      return fetch(window.WATTLEDGER_LIVE_URL, { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    }
     var url = apiBase() + 'json.htm?type=command&param=getdevices&filter=all&used=all';
     return fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
       if (r.status === 401) throw new Error('not logged in to Domoticz');
@@ -440,7 +450,7 @@
     if (!root.isConnected) { stop(); return; }
     fetchDevices().then(function (resp) {
       var v = read(resp);
-      if (!v.found) throw new Error('wattledger devices not found in Domoticz');
+      if (!v.found) throw new Error(window.WATTLEDGER_LIVE_URL ? 'no readings from the bridge yet' : 'wattledger devices not found in Domoticz');
       render(v);
     }).catch(function (e) {
       showError(e.message || String(e));

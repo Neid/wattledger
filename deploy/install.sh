@@ -3,15 +3,17 @@
 # directory deploy.sh fills (default ~/wattledger):
 #
 #   sudo ~/wattledger/install.sh                 # full install, safe to re-run
-#   sudo ~/wattledger/install.sh --bridge-only   # bridge, reset helper, units and config only (used by deploy.sh)
+#   sudo ~/wattledger/install.sh --bridge-only   # binaries, reset helper, units and config only (used by deploy.sh)
 #
 # A full install:
-#   - installs Mosquitto (and mbpoll, if the distribution has it) with apt;
+#   - installs Mosquitto and PostgreSQL (and mbpoll, if the distribution has
+#     it) with apt, and creates the "wattledger" database, role and user;
 #   - downloads VictoriaMetrics if it is missing, checks its SHA-256 and sets up
 #     its systemd service;
 #   - installs the bridge binary, its config and its systemd service, then
 #     (re)starts it;
-#   - installs the USB adapter reset helper and its systemd path unit.
+#   - installs the USB adapter reset helper and its systemd path unit;
+#   - installs the web server (wattledger-web) and its systemd service.
 #
 # Environment overrides:
 #   VM_VERSION=v1.154.0   VictoriaMetrics version to install or switch to
@@ -29,6 +31,10 @@ BRIDGE_BIN=/usr/local/bin/modbus-bridge
 BRIDGE_UNIT=wattledger-bridge.service
 RESET_BIN=/usr/local/sbin/wattledger-usb-reset
 RESET_UNITS=(wattledger-usb-reset.service wattledger-usb-reset.path)
+WEB_BIN=/usr/local/bin/wattledger-web
+WEB_UNIT=wattledger-web.service
+# System user, PostgreSQL role and database of the web server (peer auth).
+WEB_USER=wattledger
 
 VM_BIN=/usr/local/bin/victoria-metrics-prod
 VM_DATA=/var/lib/victoria-metrics
@@ -53,19 +59,57 @@ esac
 
 [[ $EUID -eq 0 ]] || die "run as root: sudo $0 $*"
 [[ $(uname -m) == aarch64 ]] || die "expected an aarch64 system, got $(uname -m) (64-bit Raspberry Pi OS needed)"
-for f in modbus-bridge "$BRIDGE_UNIT" wattledger-usb-reset "${RESET_UNITS[@]}" config/bridge.toml; do
+for f in modbus-bridge "$BRIDGE_UNIT" wattledger-usb-reset "${RESET_UNITS[@]}" config/bridge.toml \
+    wattledger-web "$WEB_UNIT" config/web.toml; do
     [[ -e $SRC/$f ]] || die "$SRC/$f is missing; run deploy.sh on the build machine first"
 done
 
 install_packages() {
-    log "Installing packages (mosquitto, rsync, curl)"
+    log "Installing packages (mosquitto, postgresql, rsync, curl)"
     apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mosquitto mosquitto-clients rsync curl ca-certificates
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mosquitto mosquitto-clients postgresql rsync curl ca-certificates
     if ! command -v mbpoll >/dev/null; then
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mbpoll ||
             warn "mbpoll is not available from apt; it is only needed to verify registers by hand"
     fi
     systemctl enable --now mosquitto
+    systemctl enable --now postgresql
+}
+
+# The web server connects over the Unix socket with peer authentication, so
+# the system user, the role and the database share one name. The tables are
+# created by the web server itself (embedded migrations).
+setup_database() {
+    id "$WEB_USER" >/dev/null 2>&1 ||
+        useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$WEB_USER"
+    if ! runuser -u postgres -- psql -Atqc "select 1 from pg_roles where rolname = '$WEB_USER'" | grep -q 1; then
+        log "Creating PostgreSQL role $WEB_USER"
+        runuser -u postgres -- createuser "$WEB_USER"
+    fi
+    if ! runuser -u postgres -- psql -Atqc "select 1 from pg_database where datname = '$WEB_USER'" | grep -q 1; then
+        log "Creating PostgreSQL database $WEB_USER"
+        runuser -u postgres -- createdb --owner "$WEB_USER" "$WEB_USER"
+    fi
+}
+
+database_ready() {
+    id "$WEB_USER" >/dev/null 2>&1 &&
+        systemctl is-active --quiet postgresql &&
+        runuser -u postgres -- psql -Atqc "select 1 from pg_database where datname = '$WEB_USER'" 2>/dev/null | grep -q 1
+}
+
+install_web() {
+    log "Installing $WEB_BIN"
+    install -m 755 "$SRC/wattledger-web" "$WEB_BIN"
+    install -m 644 "$SRC/$WEB_UNIT" "/etc/systemd/system/$WEB_UNIT"
+    systemctl daemon-reload
+    if ! database_ready; then
+        warn "PostgreSQL or the $WEB_USER database is missing; run the full install once: sudo $0"
+        return
+    fi
+    systemctl enable "$WEB_UNIT"
+    log "Restarting $WEB_UNIT"
+    systemctl restart "$WEB_UNIT"
 }
 
 vm_installed_version() {
@@ -193,6 +237,7 @@ install_bridge() {
 
 if ! $bridge_only; then
     install_packages
+    setup_database
     install_victoriametrics
     if [[ -n ${SUDO_USER:-} && $SUDO_USER != root ]] && ! id -nG "$SUDO_USER" | grep -qw dialout; then
         log "Adding $SUDO_USER to dialout (for --dry-run by hand; log in again to apply)"
@@ -200,8 +245,12 @@ if ! $bridge_only; then
     fi
 fi
 install_bridge
+install_web
 
 sleep 2
-systemctl is-active --quiet "$BRIDGE_UNIT" ||
-    warn "$BRIDGE_UNIT is not running; see: journalctl -u $BRIDGE_UNIT -n 50"
-log "Done. Logs: journalctl -u $BRIDGE_UNIT -f"
+for unit in "$BRIDGE_UNIT" "$WEB_UNIT"; do
+    systemctl is-active --quiet "$unit" ||
+        warn "$unit is not running; see: journalctl -u $unit -n 50"
+done
+log "Done. Logs: journalctl -u $BRIDGE_UNIT -u $WEB_UNIT -f"
+log "Web pages: http://$(hostname).local:8080/"

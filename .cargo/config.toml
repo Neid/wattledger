@@ -4,3 +4,9 @@
 # with Raspberry Pi OS.
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"
+
+# Database tests (sqlx::test) create a throwaway database per test on this
+# server, so the user running `cargo test` needs CREATEDB on a local
+# PostgreSQL. An exported DATABASE_URL takes precedence.
+[env]
+DATABASE_URL = "postgres:///postgres?host=/var/run/postgresql"

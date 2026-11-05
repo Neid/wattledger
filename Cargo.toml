@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/registers", "crates/modbus-bridge"]
+members = ["crates/registers", "crates/modbus-bridge", "crates/web"]
 
 [workspace.package]
 edition = "2024"

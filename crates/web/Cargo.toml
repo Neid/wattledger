@@ -1,0 +1,37 @@
+[package]
+name = "web"
+version = "0.1.0"
+description = "wattledger web server: live energy flow, history, RCE prices and export control"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "wattledger-web"
+path = "src/main.rs"
+
+# No C dependencies, so the aarch64 musl build links with rust-lld like the
+# bridge: no TLS stack (PSE's HTTPS API is fetched with curl), and PostgreSQL
+# without TLS over its Unix socket.
+[dependencies]
+anyhow.workspace = true
+humantime-serde.workspace = true
+lexopt.workspace = true
+rumqttc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ureq.workspace = true
+tokio = { workspace = true, features = ["net", "process"] }
+
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "form", "json"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
+maud = { version = "0.27", features = ["axum"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "chrono", "json"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", default-features = false, features = ["util"] }

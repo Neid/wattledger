@@ -10,6 +10,7 @@ mod decode;
 mod decoder;
 mod format;
 mod map;
+mod setting;
 
 pub use decode::{decode_raw, to_f32, to_u32};
 pub use decoder::{Decoder, Outcome, Rejection};
@@ -18,3 +19,4 @@ pub use map::{
     Block, DataType, DerivedOp, DeviceInfo, DeviceMap, MAX_BLOCK_REGISTERS, MapError,
     RegisterSource, Sensor, Source, StateClass, WordOrder,
 };
+pub use setting::{EncodeError, Setting};

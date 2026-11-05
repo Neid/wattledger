@@ -1,6 +1,7 @@
-//! Read-only Modbus RTU bridge: polls each serial bus in its own task and
-//! hands decoded readings to MQTT (Home Assistant discovery) and InfluxDB
-//! line protocol sinks.
+//! Modbus RTU bridge: polls each serial bus in its own task and hands decoded
+//! readings to MQTT (Home Assistant discovery) and InfluxDB line protocol
+//! sinks. It also writes `[[setting]]` registers on request over MQTT, when
+//! `[writes]` allows it.
 
 mod bus;
 mod cli;
@@ -10,13 +11,15 @@ mod rtu;
 mod sinks;
 mod throttle;
 mod usb_reset;
+mod write;
 
+use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{Level, error, info, warn};
 
 use crate::bus::Bus;
@@ -28,6 +31,8 @@ use crate::sinks::mqtt::MqttSink;
 
 /// Readings buffered per sink before new ones are dropped.
 const SINK_QUEUE: usize = 64;
+/// Write commands waiting per bus; more are refused as busy.
+const JOB_QUEUE: usize = 4;
 
 fn main() -> ExitCode {
     let args = match cli::parse() {
@@ -95,7 +100,7 @@ async fn poll_once(setup: Setup) -> ExitCode {
         .buses
         .into_iter()
         .map(|b| {
-            let bus = Bus::new(b);
+            let bus = Bus::new(b, crate::write::WriteMode::Off);
             (bus.name().to_owned(), tokio::spawn(bus.poll_once()))
         })
         .collect();
@@ -135,7 +140,25 @@ async fn serve(setup: Setup, dry_run: bool) -> anyhow::Result<()> {
         buses,
         mqtt,
         influx,
+        writes,
     } = setup;
+
+    // One job queue per bus; the MQTT sink routes commands by device id.
+    let buses: Vec<(Bus, mpsc::Sender<_>, mpsc::Receiver<_>)> = buses
+        .into_iter()
+        .map(|b| {
+            let (tx, rx) = mpsc::channel(JOB_QUEUE);
+            (Bus::new(b, writes.mode), tx, rx)
+        })
+        .collect();
+    let mut routes = HashMap::new();
+    if !dry_run {
+        for (bus, tx, _) in &buses {
+            for device in bus.writable_devices() {
+                routes.insert(device, tx.clone());
+            }
+        }
+    }
 
     let mut fanout = Fanout::new();
     let mut sink_tasks = Vec::new();
@@ -144,16 +167,9 @@ async fn serve(setup: Setup, dry_run: bool) -> anyhow::Result<()> {
         sink_tasks.push(tokio::spawn(sinks::stdout::run(rx)));
     } else {
         if mqtt.enabled {
-            let devices = buses
-                .iter()
-                .flat_map(|b| {
-                    b.devices
-                        .iter()
-                        .map(|d| (Arc::clone(&d.map), d.mqtt_interval))
-                })
-                .collect();
+            let devices = buses.iter().flat_map(|(b, _, _)| b.device_maps()).collect();
             let rx = fanout.add("mqtt", SINK_QUEUE);
-            sink_tasks.push(tokio::spawn(MqttSink::new(mqtt, devices).run(rx)));
+            sink_tasks.push(tokio::spawn(MqttSink::new(mqtt, devices, routes).run(rx)));
         }
         if influx.enabled {
             let rx = fanout.add("influx", SINK_QUEUE);
@@ -169,12 +185,12 @@ async fn serve(setup: Setup, dry_run: bool) -> anyhow::Result<()> {
     let bus_count = buses.len();
     let bus_tasks: Vec<_> = buses
         .into_iter()
-        .map(|b| tokio::spawn(Bus::new(b).run(Arc::clone(&fanout), stop_rx.clone())))
+        .map(|(bus, _, jobs)| tokio::spawn(bus.run(Arc::clone(&fanout), jobs, stop_rx.clone())))
         .collect();
     // From here the bus tasks hold the only references, so the sinks see
     // their channels close once every bus has stopped.
     drop(fanout);
-    info!(buses = bus_count, dry_run, "bridge running");
+    info!(buses = bus_count, dry_run, writes = ?writes.mode, "bridge running");
 
     wait_for_signal().await;
     info!("shutting down");

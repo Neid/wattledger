@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Context;
 use registers::{Decoder, Outcome};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{self, MissedTickBehavior};
 use tracing::{info, warn};
 
@@ -15,6 +15,7 @@ use crate::reading::{Fanout, Reading};
 use crate::rtu::{self, RtuError};
 use crate::throttle::ErrorLog;
 use crate::usb_reset::UsbReset;
+use crate::write::{self, Job, WriteMode};
 
 const REOPEN_BACKOFF_MIN: Duration = Duration::from_secs(1);
 const REOPEN_BACKOFF_MAX: Duration = Duration::from_secs(60);
@@ -27,10 +28,12 @@ pub struct Bus {
     devices: Vec<PolledDevice>,
     consecutive_timeouts: u32,
     health: ErrorLog,
+    writes: WriteMode,
 }
 
 struct PolledDevice {
     slave: u8,
+    mqtt_interval: Duration,
     decoder: Decoder,
     block_logs: Vec<ErrorLog>,
     sensor_logs: Vec<ErrorLog>,
@@ -53,12 +56,13 @@ impl fmt::Display for BusFault {
 }
 
 impl Bus {
-    pub fn new(setup: BusSetup) -> Self {
+    pub fn new(setup: BusSetup, writes: WriteMode) -> Self {
         let devices = setup
             .devices
             .into_iter()
             .map(|d| PolledDevice {
                 slave: d.slave,
+                mqtt_interval: d.mqtt_interval,
                 block_logs: d.map.blocks.iter().map(|_| ErrorLog::new()).collect(),
                 sensor_logs: d.map.sensors.iter().map(|_| ErrorLog::new()).collect(),
                 decoder: Decoder::new(d.map),
@@ -70,7 +74,58 @@ impl Bus {
             devices,
             consecutive_timeouts: 0,
             health: ErrorLog::new(),
+            writes,
         }
+    }
+
+    /// Maps of the devices on this bus with their MQTT publish intervals.
+    pub fn device_maps(&self) -> Vec<(Arc<registers::DeviceMap>, Duration)> {
+        self.devices
+            .iter()
+            .map(|d| (Arc::clone(d.decoder.map()), d.mqtt_interval))
+            .collect()
+    }
+
+    /// Device ids on this bus that have writable settings.
+    pub fn writable_devices(&self) -> Vec<String> {
+        self.devices
+            .iter()
+            .filter(|d| !d.decoder.map().settings.is_empty())
+            .map(|d| d.decoder.map().device.id.clone())
+            .collect()
+    }
+
+    /// Runs a write command between two poll cycles and sends the answer.
+    async fn handle_job<T>(&mut self, client: &mut rtu::Client<T>, job: Job)
+    where
+        T: AsyncRead + AsyncWrite + Unpin,
+    {
+        let Some(dev) = self
+            .devices
+            .iter()
+            .find(|d| d.decoder.map().device.id == job.device)
+        else {
+            let _ = job.reply.send(crate::sinks::commands::error_result(
+                job.command.id,
+                format!("device {:?} is not on bus {}", job.device, self.name),
+            ));
+            return;
+        };
+        let map = Arc::clone(dev.decoder.map());
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let result = write::execute(client, dev.slave, &map, self.writes, &job.command, now).await;
+        if result.ok {
+            if !result.written.is_empty() {
+                info!(bus = %self.name, device = %job.device, id = %result.id, written = ?result.written, after = ?result.after, "settings written");
+            } else if result.dry_run && !job.command.write.is_empty() {
+                info!(bus = %self.name, device = %job.device, id = %result.id, would_write = ?job.command.write, before = ?result.before, "dry run: settings not written");
+            }
+        } else {
+            warn!(bus = %self.name, device = %job.device, id = %result.id, error = result.error.as_deref().unwrap_or(""), written = ?result.written, "write command failed");
+        }
+        let _ = job.reply.send(result);
     }
 
     pub fn name(&self) -> &str {
@@ -87,7 +142,12 @@ impl Bus {
     }
 
     /// Polls until shutdown, reopening the port with backoff on failure.
-    pub async fn run(mut self, fanout: Arc<Fanout>, mut shutdown: watch::Receiver<bool>) {
+    pub async fn run(
+        mut self,
+        fanout: Arc<Fanout>,
+        mut jobs: mpsc::Receiver<Job>,
+        mut shutdown: watch::Receiver<bool>,
+    ) {
         let mut backoff = REOPEN_BACKOFF_MIN;
         let mut usb_reset = self.usb_reset();
         loop {
@@ -98,12 +158,18 @@ impl Bus {
                     let mut ticker = time::interval(self.config.poll_interval);
                     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
                     loop {
+                        // Jobs only start between poll cycles: a cycle is
+                        // never interrupted halfway.
                         let cycle = tokio::select! {
                             () = stopped(&mut shutdown) => return,
-                            cycle = async {
-                                ticker.tick().await;
-                                self.poll_cycle(&mut client).await
-                            } => cycle,
+                            Some(job) = jobs.recv() => {
+                                self.handle_job(&mut client, job).await;
+                                continue;
+                            }
+                            _ = ticker.tick() => tokio::select! {
+                                () = stopped(&mut shutdown) => return,
+                                cycle = self.poll_cycle(&mut client) => cycle,
+                            },
                         };
                         let (readings, fault) = cycle;
                         if readings.iter().any(|r| r.blocks.iter().any(Result::is_ok)) {
@@ -277,6 +343,7 @@ mod tests {
 
     use super::*;
     use crate::config::DeviceSetup;
+    use crate::write::{Command, Job};
 
     const MAP: &str = r#"
         [device]
@@ -296,28 +363,41 @@ mod tests {
         name = "Power"
         address = 200
         type = "s16"
+ 
+        [[setting]]
+        key = "mode"
+        name = "Mode"
+        address = 142
+        range = [0, 2]
     "#;
 
     fn bus(reopen_after_timeouts: u32) -> Bus {
+        bus_with_writes(reopen_after_timeouts, WriteMode::Off)
+    }
+
+    fn bus_with_writes(reopen_after_timeouts: u32, writes: WriteMode) -> Bus {
         let map = Arc::new(DeviceMap::from_toml(MAP).unwrap());
-        Bus::new(BusSetup {
-            config: BusConfig {
-                name: "test".into(),
-                port: "/dev/null".into(),
-                baud: 9600,
-                poll_interval: Duration::from_secs(1),
-                request_timeout: Duration::from_millis(100),
-                inter_request_gap: Duration::ZERO,
-                reopen_after_timeouts,
-                usb_reset_after: None,
-                devices: Vec::new(),
+        Bus::new(
+            BusSetup {
+                config: BusConfig {
+                    name: "test".into(),
+                    port: "/dev/null".into(),
+                    baud: 9600,
+                    poll_interval: Duration::from_secs(1),
+                    request_timeout: Duration::from_millis(100),
+                    inter_request_gap: Duration::ZERO,
+                    reopen_after_timeouts,
+                    usb_reset_after: None,
+                    devices: Vec::new(),
+                },
+                devices: vec![DeviceSetup {
+                    slave: 3,
+                    map,
+                    mqtt_interval: Duration::from_secs(10),
+                }],
             },
-            devices: vec![DeviceSetup {
-                slave: 3,
-                map,
-                mqtt_interval: Duration::from_secs(10),
-            }],
-        })
+            writes,
+        )
     }
 
     /// Answers reads from `registers`; addresses it does not know get
@@ -350,6 +430,55 @@ mod tests {
 
     fn client(io: DuplexStream) -> rtu::Client<DuplexStream> {
         rtu::Client::new(io, Duration::from_millis(100), Duration::ZERO)
+    }
+
+    #[tokio::test]
+    async fn jobs_go_to_the_named_device() {
+        let (master, slave) = duplex(256);
+        let regs = HashMap::from([(100, 0), (101, 55), (200, 0), (142, 2)]);
+        tokio::spawn(fake_device(slave, regs, None));
+        let mut bus = bus_with_writes(5, WriteMode::DryRun);
+        let mut client = client(master);
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let job = Job {
+            device: "meter".into(),
+            command: Command {
+                id: "j1".into(),
+                expires: u64::MAX,
+                write: vec![("mode".into(), 1.0)],
+                read: vec![],
+            },
+            reply: tx,
+        };
+        bus.handle_job(&mut client, job).await;
+        let r = rx.await.unwrap();
+        assert!(r.ok, "{r:?}");
+        assert!(r.dry_run);
+        assert_eq!(r.before["mode"], 2.0);
+        assert_eq!(r.after["mode"], 1.0);
+    }
+
+    #[tokio::test]
+    async fn jobs_for_unknown_devices_are_refused() {
+        let (master, slave) = duplex(256);
+        tokio::spawn(fake_device(slave, HashMap::new(), None));
+        let mut bus = bus_with_writes(5, WriteMode::On);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let job = Job {
+            device: "elsewhere".into(),
+            command: Command {
+                id: "j2".into(),
+                expires: u64::MAX,
+                write: vec![],
+                read: vec!["mode".into()],
+            },
+            reply: tx,
+        };
+        bus.handle_job(&mut client(master), job).await;
+        let r = rx.await.unwrap();
+        assert!(!r.ok);
+        assert!(r.error.unwrap().contains("elsewhere"));
     }
 
     #[tokio::test]

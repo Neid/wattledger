@@ -10,19 +10,30 @@ meter over Modbus RTU, and publishes their data to:
 - a **time-series database** via InfluxDB line protocol over HTTP
   (VictoriaMetrics, or InfluxDB v1/v2), at full polling resolution.
 
+A web server (`wattledger-web`) shows the live energy flow, history charts
+and RCE prices, and carries out battery export plans through the bridge.
 Later phases add a planner that schedules battery charging, discharging and
 export from prices and forecasts.
 
 ## Safety rule
 
-**The bridge is strictly read-only.** Its Modbus client (`crates/modbus-bridge/src/rtu`)
-implements function code 3 (read holding registers) and nothing else. It is
-hand-written because general-purpose Modbus crates always include write
-functions. A unit test fails if write helpers or a Modbus client crate show up
-in the bridge.
+**The bridge only writes what a device map allows, only when told to, and
+only within range.** Its Modbus client (`crates/modbus-bridge/src/rtu`) is
+hand-written because general-purpose Modbus crates ship every write function.
+It knows function code 3 (read holding registers) and 16 (write multiple
+registers, the only write Deye accepts), and nothing else; a unit test fails
+if another write function or a Modbus client crate shows up.
 
-Writing to the inverter will only ever be done by the separate `planner`
-binary (phase 3), for registers verified one by one by hand.
+- Only registers listed as `[[setting]]` in a device map can be written. Each
+  has a mandatory range, and a value outside it (or between register steps)
+  is refused before anything is sent.
+- `[writes] mode` in `bridge.toml` is `off`, `dry_run` (read, never write) or
+  `on`. In `on`, settings with `verified = false` are refused.
+- Writes run only between poll cycles, one register at a time, in the order
+  the command gives. The bridge reads the settings before and after and
+  answers with both, so the caller can restore the previous values.
+- The shipped config is `dry_run`, and every Deye setting is unverified (see
+  [Writing inverter settings](#writing-inverter-settings)).
 
 ## Phases
 
@@ -30,6 +41,7 @@ binary (phase 3), for registers verified one by one by hand.
 |---|---|---|
 | 1 | Workspace, `registers` crate, read-only bridge to MQTT and line protocol, dry-run mode, systemd deployment | **done** |
 | 2 | Verify every Deye register against the display, add remaining totals, Grafana dashboards | next |
+| 2.5 | Web server: live flow, history charts, RCE prices, export plans written through the bridge (dry run until the settings are verified) | **done** |
 | 3 | `planner`: price feed (Polish tariff zones / dynamic tariff, market price for net-billing export), PV forecast, load forecast from history, battery wear cost (~0.07 PLN/kWh cycled, 16.1 kWh LiFePO4), writes Deye TOU slots a few times per day, only when the plan changes | later |
 | 4 | Control the SmartLoad/GEN output (water heater), then a heat pump | later |
 
@@ -41,7 +53,13 @@ binary (phase 3), for registers verified one by one by hand.
             │                                                      ├─► Fanout ─┬─► MQTT sink ───► Mosquitto ─► Domoticz
  RS485 #2 ──┤ bus task "inverter"    (Deye, slave 2, every 5 s) ────┘  (try_send) ├─► Influx sink ─► VictoriaMetrics
             │                                                                 └─► stdout (--dry-run)
-            └────────────────────────────────────────────────────────────────────────────┘
+            │      ▲ write commands (between polls)                                     │
+            └──────┼─────────────────────────────────────────────────────────────────────┘
+                   │ MQTT wattledger/command/deye (+ /result)
+            ┌──────┴──────── wattledger-web (axum, htmx, PostgreSQL) ──────────────────┐
+            │ live values (MQTT) · history (VictoriaMetrics) · RCE prices (PSE, curl)  │
+            │ export plans → controller: baseline read, export writes, restore         │
+            └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **One task per serial bus.** Each has its own poll interval, reads the
@@ -83,14 +101,24 @@ config/
 crates/
   registers/                  map format, validation, decoding, plausibility (pure, no I/O)
   modbus-bridge/
-    src/rtu/                  FC3-only Modbus RTU client (CRC, framing, resync)
-    src/bus.rs                per-bus polling task
+    src/rtu/                  FC3 + FC16 Modbus RTU client (CRC, framing, resync)
+    src/bus.rs                per-bus polling task, runs write jobs between polls
+    src/write.rs              write commands: validate, read before, write, read back
     src/reading.rs            Reading + non-blocking fan-out
-    src/sinks/                mqtt + HA discovery, influx line protocol, stdout
+    src/sinks/                mqtt + HA discovery + commands, influx line protocol, stdout
+  web/                        wattledger-web
+    migrations/               PostgreSQL schema (run at startup)
+    src/control/              export plans: decisions, bridge client, controller loop
+    src/energy.rs             counters -> per-bucket energy, ratios, export earnings
+    src/prices.rs             PSE RCE parsing and fetching
+    src/projection.rs         export income projection, best start
+    src/web/                  routes, pages, SVG charts
+    assets/                   htmx, CSS, tooltip script (built into the binary)
 deploy/
   deploy.sh                   build machine: build, copy to the Pi, update + restart
   install.sh                  on the Pi: Mosquitto, VictoriaMetrics, bridge, services
   wattledger-bridge.service   systemd unit
+  wattledger-web.service      systemd unit of the web server
   wattledger-usb-reset        root helper: resets a hung USB-RS485 adapter
   wattledger-usb-reset.path   systemd units that run it on the bridge's request
   wattledger-usb-reset.service
@@ -148,6 +176,77 @@ When a map is loaded, it is checked: every register must lie entirely inside a
 declared block, keys must be unique identifiers, 32-bit types require
 `word_order`, and derived values may only reference sensors defined above
 them. Unknown fields are errors, so a typo like `scal = 0.1` is caught.
+
+## Web server
+
+`wattledger-web` listens on port 8080 (`config/web.toml`) and has four tabs:
+
+| Tab | Shows |
+|---|---|
+| Energy flow | `domoticz/Energy.html` (the same file), fed from `/api/live`: live values from MQTT, today's totals from VictoriaMetrics |
+| History | day / week / month / year: production, home use, grid import/export, battery charge/discharge, inverter own use, solar used at home %, battery efficiency %, export earnings at RCE |
+| RCE prices | today and tomorrow (or any stored day) per 15 minutes, with the current slot and the best hour to export |
+| Export | schedule "export from time X until battery Y%", with projected energy, end time and income, the best start with known prices, the plan list, the inverter's current settings and the app settings (max export power, battery capacity, ...) |
+
+There is no login: keep port 8080 on the home network.
+
+- **Data.** Prices, settings, plans and every command sent to the bridge are
+  in PostgreSQL (database `wattledger`, Unix socket, peer authentication).
+  History comes straight from VictoriaMetrics; nothing is copied.
+- **Prices.** Every 15 minutes the server fetches RCE days that are missing
+  (the last `backfill_days`, today, and tomorrow from 13:00) from
+  `api.raporty.pse.pl` with `curl`. The binary has no TLS stack, so it stays a
+  static musl build without a C toolchain.
+- **Definitions.** Inverter own use = (solar + battery out + grid in) − (home +
+  battery in + grid out). Solar used at home = (solar − export) / solar.
+  Battery efficiency = discharged / charged. Earnings = each 15 minutes of
+  export × that slot's RCE, negative prices as zero, × the export price
+  factor (1 by default).
+- **Projection.** From the live SOC, the battery delivers
+  `(SOC − stop SOC) × capacity × discharge efficiency`; it exports at the
+  export power while also covering the home load setting.
+
+### Export plans
+
+A plan has a start, a stop SOC, an export power and a latest end. The
+controller checks plans every 5 seconds:
+
+1. **Start:** it reads the 22 export settings once and stores them as the
+   baseline, then writes Deye's forced-discharge recipe: every time-of-use
+   slot gets the export power, the stop SOC and no grid charging, max sell
+   power gets the export power, solar sell and time of use are switched on,
+   and the work mode becomes "Selling first" (written last).
+2. **Finish:** when the live SOC reaches the stop SOC, at the latest end, or
+   when you press Stop, it writes the baseline back, work mode first.
+3. **Failures:** a refused start is retried every minute until the latest
+   end. A start that wrote part of the settings is rolled back at once. If
+   the bridge does not answer, the export may be running, so a plan that got
+   as far as a baseline is always restored before it is closed. A failed
+   restore is retried every minute.
+
+Only one plan runs at a time, and plans may not overlap. With the bridge in
+`dry_run`, plans go through every step and are marked "dry run"; nothing on
+the inverter changes.
+
+## Writing inverter settings
+
+The Deye map's `[[setting]]` entries (work mode 142, max sell power 143, solar
+sell 145, time of use 146, slot power 154–159, slot SOC 166–171, slot charge
+172–177) come from the ha-solarman `deye_p3` map and are **not yet checked**
+on this inverter. To check them:
+
+1. With the bridge in `dry_run` (the shipped config), open Export → **Read
+   inverter settings** and compare every value with the inverter display
+   (System settings and Time of use). Max sell power is 4 kW today, so
+   `max_sell_power` must show 4000; 400 or 40000 means the scale is wrong.
+2. Schedule a short dry-run export and read the bridge log
+   (`journalctl -u wattledger-bridge`): it lists what it would write.
+3. Set `verified = true` for each matching setting in
+   `config/devices/deye-sg05lp3.toml`, set `[writes] mode = "on"` in
+   `config/bridge.toml`, and deploy.
+4. Watch the first real export at the inverter: it should sell from the
+   battery at the export power and stop at the stop SOC, and its settings
+   should be back as before once the plan ends.
 
 ## Verifying registers
 
@@ -283,21 +382,31 @@ one the server refuses with a 4xx status is dropped.
 ## Build and test
 
 ```sh
-cargo test                  # unit tests: decoding, maps, framing, polling, discovery, line protocol
+cargo test                  # unit tests: decoding, maps, framing, polling, writes, web, database
 cargo clippy --all-targets
+```
+
+The web server's database tests create a throwaway database per test, so
+they need a local PostgreSQL where your user may create databases.
+`.cargo/config.toml` points `DATABASE_URL` at
+`postgres:///postgres?host=/var/run/postgresql`; export your own
+`DATABASE_URL` to use another server. Once, on the build machine:
+
+```sh
+sudo -u postgres createuser --createdb "$USER"
 ```
 
 ## Cross-compiling for the Pi (aarch64)
 
-The bridge is built as a **static musl binary** (about 1.3 MB), so it does not
-depend on the Pi's glibc version. Rust's bundled `rust-lld` links it, which
+The bridge and the web server are built as **static musl binaries**, so they
+do not depend on the Pi's glibc version. Rust's bundled `rust-lld` links it, which
 `.cargo/config.toml` configures, so no cross toolchain, Docker or zig is
 needed:
 
 ```sh
 rustup target add aarch64-unknown-linux-musl     # once
-cargo build --release --target aarch64-unknown-linux-musl -p modbus-bridge
-# -> target/aarch64-unknown-linux-musl/release/modbus-bridge
+cargo build --release --target aarch64-unknown-linux-musl -p modbus-bridge -p web
+# -> target/aarch64-unknown-linux-musl/release/{modbus-bridge,wattledger-web}
 ```
 
 (`cross build --release --target aarch64-unknown-linux-musl` also works if you
@@ -329,8 +438,10 @@ ssh -t pi@raspberrypi.local sudo ~/wattledger/install.sh
 
 `install.sh` must run on a 64-bit Raspberry Pi OS (aarch64). It:
 
-1. Installs `mosquitto`, `mosquitto-clients`, `rsync` and `curl` with apt,
-   plus `mbpoll` if apt has it, and enables Mosquitto.
+1. Installs `mosquitto`, `mosquitto-clients`, `postgresql`, `rsync` and
+   `curl` with apt, plus `mbpoll` if apt has it, and enables Mosquitto and
+   PostgreSQL. It creates the system user, PostgreSQL role and database
+   `wattledger` (the web server creates its tables itself).
 2. Installs **VictoriaMetrics** if it is missing. It takes the latest
    `victoria-metrics-linux-arm64` release from GitHub and checks the tarball
    against the release's SHA-256 checksums. The binary goes to
@@ -343,6 +454,8 @@ ssh -t pi@raspberrypi.local sudo ~/wattledger/install.sh
    installs `wattledger-bridge.service`, enables it and restarts it. It warns
    if a configured serial port is missing, or if a port is not a `ttyACM`
    device (the unit only allows `char-ttyACM`).
+5. Installs `wattledger-web` and `wattledger-web.service` (user
+   `wattledger`), enables it and restarts it.
 
 Environment overrides (pass them through sudo, e.g.
 `sudo VM_RETENTION=10y ~/wattledger/install.sh`):
@@ -377,7 +490,10 @@ ssh pi@raspberrypi.local journalctl -u wattledger-bridge -f
 ```
 
 Under the hood this runs `sudo ~/wattledger/install.sh --bridge-only`, which
-leaves packages and VictoriaMetrics alone.
+leaves packages, PostgreSQL and VictoriaMetrics alone and updates both
+services. If the Pi was installed before the web server existed, run the full
+install once (`sudo ~/wattledger/install.sh`) to get PostgreSQL and the
+database; until then the update skips the web service with a warning.
 
 The unit runs the bridge under a dynamic unprivileged user with access to
 `ttyACM` devices only, and restarts it 5 s after any exit.
