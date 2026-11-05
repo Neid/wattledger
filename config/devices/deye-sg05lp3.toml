@@ -492,12 +492,11 @@ state_class = "measurement"
 # them but writes nothing). A setting with verified = false is refused in
 # mode "on".
 #
-# Addresses and scales come from the ha-solarman deye_p3 map and are NOT yet
-# checked on this inverter. To verify: with the bridge in dry_run mode, open
-# the web page's Export tab, press "Read inverter settings" and compare each
-# value with the inverter display (System settings / Time of use). The max
-# sell power is 4 kW today, so max_sell_power must read 4000; if it reads 400
-# or 40000, the scale is wrong.
+# Addresses come from the ha-solarman deye_p3 map. Verified on this inverter
+# (2026-11-05) by reading them in dry_run mode and comparing with the display:
+# max sell power 5 kW read 5000 and a 4 kW time-of-use slot 4000, so power
+# registers are plain watts (not the x10 ha-solarman uses); work mode read 1,
+# "Zero export to load".
 #
 # The export controller uses them like this (Deye's "forced discharge"):
 # work mode "Selling first", solar sell on, time of use on for every day, and
@@ -510,74 +509,77 @@ key = "work_mode"
 name = "Work mode (0 selling first, 1 zero export to load, 2 zero export to CT)"
 address = 142
 range = [0, 2]
+verified = true
 
 [[setting]]
 key = "max_sell_power"
 name = "Max sell power (System settings)"
 address = 143
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "solar_sell"
 name = "Solar sell (0 off, 1 on)"
 address = 145
 range = [0, 1]
+verified = true
 
 [[setting]]
 key = "tou_selling"
 name = "Time of use (bit 0 on, bits 1-7 Monday-Sunday)"
 address = 146
 range = [0, 255]
+verified = true
 
 [[setting]]
 key = "tou_power_1"
 name = "Time of use slot 1 power"
 address = 154
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_power_2"
 name = "Time of use slot 2 power"
 address = 155
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_power_3"
 name = "Time of use slot 3 power"
 address = 156
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_power_4"
 name = "Time of use slot 4 power"
 address = 157
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_power_5"
 name = "Time of use slot 5 power"
 address = 158
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_power_6"
 name = "Time of use slot 6 power"
 address = 159
-scale = 10
 unit = "W"
 range = [0, 10000]
+verified = true
 
 [[setting]]
 key = "tou_soc_1"
@@ -585,6 +587,7 @@ name = "Time of use slot 1 SOC"
 address = 166
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_soc_2"
@@ -592,6 +595,7 @@ name = "Time of use slot 2 SOC"
 address = 167
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_soc_3"
@@ -599,6 +603,7 @@ name = "Time of use slot 3 SOC"
 address = 168
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_soc_4"
@@ -606,6 +611,7 @@ name = "Time of use slot 4 SOC"
 address = 169
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_soc_5"
@@ -613,6 +619,7 @@ name = "Time of use slot 5 SOC"
 address = 170
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_soc_6"
@@ -620,39 +627,46 @@ name = "Time of use slot 6 SOC"
 address = 171
 unit = "%"
 range = [0, 100]
+verified = true
 
 [[setting]]
 key = "tou_charge_1"
 name = "Time of use slot 1 charge (bit 0 grid, bit 1 generator)"
 address = 172
 range = [0, 3]
+verified = true
 
 [[setting]]
 key = "tou_charge_2"
 name = "Time of use slot 2 charge (bit 0 grid, bit 1 generator)"
 address = 173
 range = [0, 3]
+verified = true
 
 [[setting]]
 key = "tou_charge_3"
 name = "Time of use slot 3 charge (bit 0 grid, bit 1 generator)"
 address = 174
 range = [0, 3]
+verified = true
 
 [[setting]]
 key = "tou_charge_4"
 name = "Time of use slot 4 charge (bit 0 grid, bit 1 generator)"
 address = 175
 range = [0, 3]
+verified = true
 
 [[setting]]
 key = "tou_charge_5"
 name = "Time of use slot 5 charge (bit 0 grid, bit 1 generator)"
 address = 176
 range = [0, 3]
+verified = true
 
 [[setting]]
 key = "tou_charge_6"
 name = "Time of use slot 6 charge (bit 0 grid, bit 1 generator)"
 address = 177
 range = [0, 3]
+verified = true

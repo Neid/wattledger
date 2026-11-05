@@ -67,6 +67,23 @@ fn deye_declares_export_settings() {
     assert_eq!(soc.range, (0.0, 100.0));
 }
 
+/// Checked on the inverter (2026-11-05): max sell power 5 kW read as raw
+/// 5000 and a 4 kW time-of-use slot as raw 4000, so power registers are in
+/// watts. ha-solarman's x10 does not apply to this inverter.
+#[test]
+fn deye_power_settings_are_in_watts() {
+    let map = load("deye-sg05lp3.toml");
+    let mut keys = vec!["max_sell_power".to_owned()];
+    keys.extend((1..=6).map(|slot| format!("tou_power_{slot}")));
+    for key in &keys {
+        let s = &map.settings[map.setting_index(key).unwrap()];
+        assert_eq!(s.scale, 1.0, "{key}");
+        assert_eq!(s.unit.as_deref(), Some("W"), "{key}");
+        assert_eq!(s.decode(5000), 5000.0, "{key}");
+        assert_eq!(s.encode(4000.0), Ok(4000), "{key}");
+    }
+}
+
 #[test]
 fn dtsu666_has_no_settings() {
     assert!(load("dtsu666.toml").settings.is_empty());

@@ -32,8 +32,8 @@ if another write function or a Modbus client crate shows up.
 - Writes run only between poll cycles, one register at a time, in the order
   the command gives. The bridge reads the settings before and after and
   answers with both, so the caller can restore the previous values.
-- The shipped config is `dry_run`, and every Deye setting is unverified (see
-  [Writing inverter settings](#writing-inverter-settings)).
+- The shipped config is `on`: every Deye setting was checked against the
+  inverter display (see [Writing inverter settings](#writing-inverter-settings)).
 
 ## Phases
 
@@ -41,7 +41,7 @@ if another write function or a Modbus client crate shows up.
 |---|---|---|
 | 1 | Workspace, `registers` crate, read-only bridge to MQTT and line protocol, dry-run mode, systemd deployment | **done** |
 | 2 | Verify every Deye register against the display, add remaining totals, Grafana dashboards | next |
-| 2.5 | Web server: live flow, history charts, RCE prices, export plans written through the bridge (dry run until the settings are verified) | **done** |
+| 2.5 | Web server: live flow, history charts, RCE prices, export plans written through the bridge | **done** |
 | 3 | `planner`: price feed (Polish tariff zones / dynamic tariff, market price for net-billing export), PV forecast, load forecast from history, battery wear cost (~0.07 PLN/kWh cycled, 16.1 kWh LiFePO4), writes Deye TOU slots a few times per day, only when the plan changes | later |
 | 4 | Control the SmartLoad/GEN output (water heater), then a heat pump | later |
 
@@ -232,13 +232,15 @@ the inverter changes.
 
 The Deye map's `[[setting]]` entries (work mode 142, max sell power 143, solar
 sell 145, time of use 146, slot power 154–159, slot SOC 166–171, slot charge
-172–177) come from the ha-solarman `deye_p3` map and are **not yet checked**
-on this inverter. To check them:
+172–177) come from the ha-solarman `deye_p3` map. Read back on this inverter,
+the power registers are plain watts (max sell power 5 kW reads 5000), not the
+×10 ha-solarman uses. All of them were checked against the inverter display
+on 2026-11-05 and are marked `verified = true`. How they were checked, and how
+to check a new setting:
 
-1. With the bridge in `dry_run` (the shipped config), open Export → **Read
+1. With the bridge in `[writes] mode = "dry_run"`, open Export → **Read
    inverter settings** and compare every value with the inverter display
-   (System settings and Time of use). Max sell power is 4 kW today, so
-   `max_sell_power` must show 4000; 400 or 40000 means the scale is wrong.
+   (System settings and Time of use).
 2. Schedule a short dry-run export and read the bridge log
    (`journalctl -u wattledger-bridge`): it lists what it would write.
 3. Set `verified = true` for each matching setting in

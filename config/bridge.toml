@@ -94,5 +94,6 @@ max_batch_lines = 5000
 #   dry_run  settings are read, nothing is written; the log and the answer
 #            show what would have been written
 #   on       verified settings are written; unverified ones are refused
+# The Deye settings were verified against the inverter display on 2026-11-05.
 [writes]
-mode = "dry_run"
+mode = "on"

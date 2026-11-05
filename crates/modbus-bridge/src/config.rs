@@ -389,11 +389,18 @@ mod tests {
         assert_eq!(setup.buses[0].config.poll_interval, Duration::from_secs(2));
         assert_eq!(setup.buses[1].config.poll_interval, Duration::from_secs(5));
         assert!(setup.buses.iter().all(|b| b.config.usb_reset_after.is_some()));
-        assert_eq!(
-            setup.writes.mode,
-            WriteMode::DryRun,
-            "the shipped config must never write until registers are verified"
-        );
+        // Writes are on only because every Deye setting was checked against
+        // the inverter display (2026-11-05).
+        assert_eq!(setup.writes.mode, WriteMode::On);
+        let unverified: Vec<&str> = setup
+            .buses
+            .iter()
+            .flat_map(|b| &b.devices)
+            .flat_map(|d| &d.map.settings)
+            .filter(|s| !s.verified)
+            .map(|s| s.key.as_str())
+            .collect();
+        assert!(unverified.is_empty(), "unverified settings: {unverified:?}");
     }
 
     #[test]
