@@ -245,8 +245,10 @@ async fn render_export(
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct PlanForm {
-    pub start: String,
-    pub end: String,
+    pub start_date: String,
+    pub start_time: String,
+    pub end_date: String,
+    pub end_time: String,
     pub target_soc: String,
     pub power_w: String,
 }
@@ -258,18 +260,18 @@ struct ParsedPlan {
     power_w: i32,
 }
 
-fn parse_local(field: &str, value: &str) -> Result<DateTime<Utc>, String> {
-    let t = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
-        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S"))
-        .map_err(|_| format!("{field}: enter a date and time"))?;
+fn parse_local(field: &str, date: &str, time: &str) -> Result<DateTime<Utc>, String> {
+    let value = format!("{}T{}", date.trim(), time.trim());
+    let t = NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M")
+        .map_err(|_| format!("{field}: enter a date and a time (HH:MM)"))?;
     time::from_local(t).ok_or_else(|| format!("{field}: that time does not exist (clock change)"))
 }
 
 impl PlanForm {
     fn parse(&self) -> Result<ParsedPlan, String> {
         Ok(ParsedPlan {
-            start: parse_local("start", &self.start)?,
-            end: parse_local("latest end", &self.end)?,
+            start: parse_local("start", &self.start_date, &self.start_time)?,
+            end: parse_local("latest end", &self.end_date, &self.end_time)?,
             target_soc: self
                 .target_soc
                 .trim()
@@ -404,7 +406,7 @@ async fn read_inverter(State(st): State<AppState>) -> Page {
         id: format!("read-{}", now.timestamp_millis()),
         expires: (now + READ_TTL).timestamp().max(0) as u64,
         write: Vec::new(),
-        read: plan::export_keys(),
+        read: plan::display_keys(),
     };
     db::log_command(
         &st.pool,

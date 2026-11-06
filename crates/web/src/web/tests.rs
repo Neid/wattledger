@@ -230,6 +230,8 @@ async fn export_page_lists_plans_and_settings(pool: PgPool) {
     let (status, body) = get(&app(pool), "/export").await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("name=\"target_soc\""));
+    assert!(body.contains("name=\"start_time\""), "24-hour time list");
+    assert!(body.contains(">23:45<"), "24-hour time list");
     assert!(body.contains("value=\"4000\""), "max export power setting");
     assert!(body.contains("80%"), "live SOC");
 }
@@ -241,7 +243,7 @@ async fn creating_and_cancelling_a_plan(pool: PgPool) {
     let (status, headers, _) = post(
         &app,
         "/export/plans",
-        "start=2026-11-05T17%3A00&end=2026-11-05T22%3A00&target_soc=30&power_w=4000",
+        "start_date=2026-11-05&start_time=17%3A00&end_date=2026-11-05&end_time=22%3A00&target_soc=30&power_w=4000",
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -271,7 +273,7 @@ async fn invalid_plans_are_explained(pool: PgPool) {
     let (status, _, body) = post(
         &app,
         "/export/plans",
-        "start=2026-11-05T17%3A00&end=2026-11-05T22%3A00&target_soc=5&power_w=4000",
+        "start_date=2026-11-05&start_time=17%3A00&end_date=2026-11-05&end_time=22%3A00&target_soc=5&power_w=4000",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "htmx only swaps 2xx responses");
@@ -284,7 +286,7 @@ async fn invalid_plans_are_explained(pool: PgPool) {
     let (_, _, body) = post(
         &app,
         "/export/plans",
-        "start=garbage&end=x&target_soc=30&power_w=4000",
+        "start_date=garbage&start_time=17%3A00&end_date=x&end_time=x&target_soc=30&power_w=4000",
     )
     .await;
     assert!(body.contains("start"), "{body}");
@@ -296,7 +298,7 @@ async fn preview_projects_income(pool: PgPool) {
     let (status, _, body) = post(
         &app(pool),
         "/export/preview",
-        "start=2026-11-05T17%3A00&end=2026-11-05T22%3A00&target_soc=30&power_w=4000",
+        "start_date=2026-11-05&start_time=17%3A00&end_date=2026-11-05&end_time=22%3A00&target_soc=30&power_w=4000",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -338,6 +340,12 @@ async fn reads_inverter_settings(pool: PgPool) {
     let sent = inverter.sent.lock().unwrap();
     assert_eq!(sent.len(), 1);
     assert!(sent[0].write.is_empty(), "reading never writes");
+    assert!(
+        sent[0].read.contains(&"tou_time_1".to_owned()),
+        "slot times"
+    );
+    assert!(body.contains("What it does"), "{body}");
+    assert!(body.contains("Time of use"), "{body}");
     assert!(sent[0].expires > utc(NOW).timestamp() as u64);
 }
 

@@ -533,6 +533,51 @@ address = 146
 range = [0, 255]
 verified = true
 
+# Slot start times, stored as HHMM (2200 = 22:00). A slot runs until the next
+# slot's start; slot 6 runs until slot 1. Read for display only: an export
+# never writes them, so they stay unverified and writes to them are refused.
+[[setting]]
+key = "tou_time_1"
+name = "Time of use slot 1 start (HHMM)"
+address = 148
+range = [0, 2359]
+verified = false
+
+[[setting]]
+key = "tou_time_2"
+name = "Time of use slot 2 start (HHMM)"
+address = 149
+range = [0, 2359]
+verified = false
+
+[[setting]]
+key = "tou_time_3"
+name = "Time of use slot 3 start (HHMM)"
+address = 150
+range = [0, 2359]
+verified = false
+
+[[setting]]
+key = "tou_time_4"
+name = "Time of use slot 4 start (HHMM)"
+address = 151
+range = [0, 2359]
+verified = false
+
+[[setting]]
+key = "tou_time_5"
+name = "Time of use slot 5 start (HHMM)"
+address = 152
+range = [0, 2359]
+verified = false
+
+[[setting]]
+key = "tou_time_6"
+name = "Time of use slot 6 start (HHMM)"
+address = 153
+range = [0, 2359]
+verified = false
+
 [[setting]]
 key = "tou_power_1"
 name = "Time of use slot 1 power"

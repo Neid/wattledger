@@ -370,7 +370,29 @@ pub struct ExportView<'a> {
     pub settings_error: Option<&'a str>,
 }
 
-const INPUT_TIME: &str = "%Y-%m-%dT%H:%M";
+const INPUT_DATE: &str = "%Y-%m-%d";
+const INPUT_TIME: &str = "%H:%M";
+
+/// A date picker and a 24-hour time list in slot steps. The browser's own
+/// datetime-local input follows the system locale and may show AM/PM.
+fn date_time(label: &str, name: &str, date: &str, time: &str) -> Markup {
+    let step = SLOT.num_minutes();
+    let times: Vec<String> = (0..24 * 60 / step)
+        .map(|i| format!("{:02}:{:02}", i * step / 60, i * step % 60))
+        .collect();
+    let on_list = times.iter().any(|t| t == time);
+    html! {
+        label { (label)
+            span.suffix {
+                input type="date" name=(format!("{name}_date")) value=(date) required;
+                select name=(format!("{name}_time")) required {
+                    @if !on_list { option value=(time) selected { (time) } }
+                    @for t in &times { option value=(t) selected[t == time] { (t) } }
+                }
+            }
+        }
+    }
+}
 
 fn status_badge(row: &PlanRow) -> Markup {
     let status = row.status();
@@ -391,9 +413,12 @@ fn status_badge(row: &PlanRow) -> Markup {
 pub fn export_page(v: &ExportView) -> Markup {
     let s = v.settings;
     let start = time::floor_slot(v.now) + SLOT;
+    let end = start + Duration::hours(6);
     let defaults = PlanForm {
-        start: local(start, INPUT_TIME),
-        end: local(start + Duration::hours(6), INPUT_TIME),
+        start_date: local(start, INPUT_DATE),
+        start_time: local(start, INPUT_TIME),
+        end_date: local(end, INPUT_DATE),
+        end_time: local(end, INPUT_TIME),
         target_soc: s.min_soc.max(20).to_string(),
         power_w: s.max_export_power_w.to_string(),
     };
@@ -412,10 +437,10 @@ pub fn export_page(v: &ExportView) -> Markup {
                 p.muted { "From the start time the inverter sells from the battery at the export power until the battery reaches the stop SOC, or until the latest end. Then the inverter's previous settings are put back." }
                 @if let Some(e) = error { p.error { (e) } }
                 form #plan-form method="post" action="/export/plans" {
-                    label { "Start" input type="datetime-local" name="start" value=(form.start) required; }
+                    (date_time("Start", "start", &form.start_date, &form.start_time))
                     label { "Stop at battery" span.suffix { input type="number" name="target_soc" min=(s.min_soc) max="99" value=(form.target_soc) required; "%" } }
                     label { "Export power" span.suffix { input type="number" name="power_w" min="100" max=(s.max_export_power_w) step="100" value=(form.power_w) required; "W" } }
-                    label { "Latest end" input type="datetime-local" name="end" value=(form.end) required; }
+                    (date_time("Latest end", "end", &form.end_date, &form.end_time))
                     button type="submit" { "Schedule export" }
                 }
             }
@@ -533,6 +558,81 @@ pub fn preview(
     }
 }
 
+/// General inverter settings: key, how to show the value, what it does.
+const GENERAL_SETTINGS: [(&str, &str, &str); 4] = [
+    (
+        "work_mode",
+        "",
+        "What the inverter does with surplus power. 0 Selling first: sell to the grid. 1 Zero export to load: cover only the inverter's own load output. 2 Zero export to CT: cover the whole house as seen by the grid meter, sell nothing.",
+    ),
+    (
+        "max_sell_power",
+        " W",
+        "The most the inverter will ever push into the grid (System settings). An export sets it to the export power.",
+    ),
+    (
+        "solar_sell",
+        "",
+        "Whether surplus solar power may be sold to the grid (0 off, 1 on).",
+    ),
+    (
+        "tou_selling",
+        "",
+        "Time of use switch and its days: bit 0 turns time of use on, bits 1-7 pick Monday to Sunday. 255 means on every day.",
+    ),
+];
+
+fn work_mode(v: f64) -> Option<&'static str> {
+    match v as i64 {
+        0 => Some("Selling first"),
+        1 => Some("Zero export to load"),
+        2 => Some("Zero export to CT"),
+        _ => None,
+    }
+}
+
+fn on_off(v: f64) -> &'static str {
+    if v == 0.0 { "off" } else { "on" }
+}
+
+/// The days set in the time-of-use register, as the inverter shows them.
+fn tou_days(v: f64) -> String {
+    let bits = v as u32;
+    if bits & 1 == 0 {
+        return "off".into();
+    }
+    let days: Vec<&str> = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| bits & (1 << (i + 1)) != 0)
+        .map(|(_, d)| *d)
+        .collect();
+    match days.len() {
+        0 => "on, no days".into(),
+        7 => "on, every day".into(),
+        _ => format!("on, {}", days.join(" ")),
+    }
+}
+
+/// A slot start time stored as HHMM (2200) shown as 22:00.
+fn hhmm(v: f64) -> String {
+    let v = v as u32;
+    format!("{:02}:{:02}", v / 100, v % 100)
+}
+
+fn general_value(key: &str, unit: &str, v: f64) -> String {
+    let shown = match key {
+        "work_mode" => work_mode(v).map(str::to_owned),
+        "solar_sell" => Some(on_off(v).to_owned()),
+        "tou_selling" => Some(tou_days(v)),
+        _ => None,
+    };
+    match shown {
+        Some(s) => format!("{v} ({s})"),
+        None => format!("{v}{unit}"),
+    }
+}
+
 pub fn inverter_settings(result: Result<CommandResult, String>) -> Markup {
     html! {
         @match result {
@@ -541,15 +641,64 @@ pub fn inverter_settings(result: Result<CommandResult, String>) -> Markup {
                 @if r.dry_run {
                     p.badge.muted { "Bridge in dry run mode: exports are simulated and nothing is written." }
                 }
-                table {
+                table.settings {
+                    thead { tr { th { "Setting" } th { "Value" } th { "What it does" } } }
                     tbody {
-                        @for (k, v) in &r.before {
-                            tr { th { code { (k) } } td { (v) } }
+                        @for (key, unit, about) in GENERAL_SETTINGS {
+                            @if let Some(v) = r.before.get(key) {
+                                tr { th { code { (key) } } td { (general_value(key, unit, *v)) } td.about { (about) } }
+                            }
                         }
                     }
                 }
+                (tou_table(&r.before))
                 button.secondary hx-post="/export/inverter" hx-target="#inverter" hx-disabled-elt="this" { "Read again" }
             }
         }
+    }
+}
+
+/// The six time-of-use slots laid out like the inverter's own screen.
+fn tou_table(v: &std::collections::BTreeMap<String, f64>) -> Markup {
+    let get = |name: &str, slot: usize| v.get(&format!("tou_{name}_{slot}")).copied();
+    let time = |slot: usize| get("time", slot).map_or("–".into(), hhmm);
+    html! {
+        h3 { "Time of use" }
+        p.muted.small { "Each slot runs from its start until the next slot's start; slot 6 runs until slot 1. While time of use is on, the inverter sells from the battery at up to the slot's power until the battery is down to the slot's SOC. Grid / Gen: whether the battery may charge from the grid or the generator port in that slot." }
+        table.settings {
+            thead { tr { th { "Slot" } th { "Time" } th { "Power" } th { "SOC" } th { "Grid" } th { "Gen" } } }
+            tbody {
+                @for slot in 1..=6 {
+                    @let charge = get("charge", slot).map(|c| c as u32);
+                    tr {
+                        th { (slot) }
+                        td { (time(slot)) " – " (time(slot % 6 + 1)) }
+                        td { (get("power", slot).map_or("–".into(), |p| format!("{p} W"))) }
+                        td { (get("soc", slot).map_or("–".into(), |s| format!("{s}%"))) }
+                        td { (charge.map_or("–", |c| if c & 1 != 0 { "✓" } else { "–" })) }
+                        td { (charge.map_or("–", |c| if c & 2 != 0 { "✓" } else { "–" })) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inverter_values_read_like_the_display() {
+        assert_eq!(hhmm(2200.0), "22:00");
+        assert_eq!(hhmm(5.0), "00:05");
+        assert_eq!(tou_days(255.0), "on, every day");
+        assert_eq!(tou_days(254.0), "off");
+        assert_eq!(tou_days(1.0 + 2.0 + 64.0), "on, Mon Sat");
+        assert_eq!(
+            general_value("work_mode", "", 1.0),
+            "1 (Zero export to load)"
+        );
+        assert_eq!(general_value("max_sell_power", " W", 5000.0), "5000 W");
     }
 }

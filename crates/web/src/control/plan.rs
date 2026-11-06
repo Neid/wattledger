@@ -185,6 +185,14 @@ pub fn export_keys() -> Vec<String> {
     export_writes(0, 0).into_iter().map(|(k, _)| k).collect()
 }
 
+/// Everything the inverter settings view shows: what an export changes, plus
+/// the time-of-use slot start times.
+pub fn display_keys() -> Vec<String> {
+    let mut keys = export_keys();
+    keys.extend((1..=6).map(|slot| format!("tou_time_{slot}")));
+    keys
+}
+
 /// Writes that put back the values read before the export: the work mode
 /// first, so selling stops before anything else changes.
 pub fn restore_writes(before: &BTreeMap<String, f64>) -> Vec<(String, f64)> {

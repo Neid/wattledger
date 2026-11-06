@@ -399,6 +399,8 @@ mod tests {
             .flat_map(|d| &d.map.settings)
             .filter(|s| !s.verified)
             .map(|s| s.key.as_str())
+            // Slot start times are only read (shown in the web UI), never written.
+            .filter(|k| !k.starts_with("tou_time_"))
             .collect();
         assert!(unverified.is_empty(), "unverified settings: {unverified:?}");
     }

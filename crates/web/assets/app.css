@@ -102,9 +102,11 @@ th:first-child, td:first-child { text-align: left; }
 table.plans { width: 100%; }
 table.plans td.note { text-align: left; color: var(--ink-2); max-width: 280px; }
 details.table table { width: 100%; margin-top: 8px; }
+table.settings { width: 100%; margin-bottom: 12px; }
+table.settings td.about { text-align: left; color: var(--ink-2); font-size: 12px; }
 
 form label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0; }
-input { font: inherit; color: inherit; background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+input, select { font: inherit; color: inherit; background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
 input[type="number"] { width: 110px; text-align: right; }
 .suffix { display: inline-flex; align-items: center; gap: 6px; }
 button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; background: var(--accent); color: #fff; cursor: pointer; margin-top: 6px; }

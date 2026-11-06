@@ -35,7 +35,8 @@ fn deye_loads_with_all_sensors_verified() {
     assert!(unverified.is_empty(), "unverified: {unverified:?}");
 }
 
-/// The export controller in the web server writes exactly these keys.
+/// The export controller in the web server writes exactly these keys, plus
+/// the slot times it only reads.
 #[test]
 fn deye_declares_export_settings() {
     let map = load("deye-sg05lp3.toml");
@@ -50,6 +51,10 @@ fn deye_declares_export_settings() {
         expected.push((format!("tou_soc_{slot}"), 165 + slot));
         expected.push((format!("tou_charge_{slot}"), 171 + slot));
     }
+    // Read for display only, never written by an export.
+    for slot in 1..=6u16 {
+        expected.push((format!("tou_time_{slot}"), 147 + slot));
+    }
     for (key, address) in &expected {
         let i = map
             .setting_index(key)
@@ -63,6 +68,9 @@ fn deye_declares_export_settings() {
     );
     let mode = &map.settings[map.setting_index("work_mode").unwrap()];
     assert_eq!(mode.range, (0.0, 2.0));
+    let time = &map.settings[map.setting_index("tou_time_1").unwrap()];
+    assert_eq!(time.range, (0.0, 2359.0));
+    assert!(!time.verified, "slot times are never written");
     let soc = &map.settings[map.setting_index("tou_soc_1").unwrap()];
     assert_eq!(soc.range, (0.0, 100.0));
 }
