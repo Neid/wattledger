@@ -105,6 +105,7 @@ details.table table { width: 100%; margin-top: 8px; }
 table.settings { width: 100%; margin-bottom: 12px; }
 table.settings td.about { text-align: left; color: var(--ink-2); font-size: 12px; }
 
+form.narrow { max-width: 520px; }
 form label { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0; }
 input, select { font: inherit; color: inherit; background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
 input[type="number"] { width: 110px; text-align: right; }

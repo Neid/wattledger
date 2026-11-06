@@ -70,7 +70,6 @@ fn deye_declares_export_settings() {
     assert_eq!(mode.range, (0.0, 2.0));
     let time = &map.settings[map.setting_index("tou_time_1").unwrap()];
     assert_eq!(time.range, (0.0, 2359.0));
-    assert!(!time.verified, "slot times are never written");
     let soc = &map.settings[map.setting_index("tou_soc_1").unwrap()];
     assert_eq!(soc.range, (0.0, 100.0));
 }

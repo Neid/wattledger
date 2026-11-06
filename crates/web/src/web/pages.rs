@@ -501,28 +501,26 @@ pub fn export_page(v: &ExportView) -> Markup {
                 }
             }
         }
-        div.grid2 {
-            section.card {
-                h2 { "Inverter settings" }
-                p.muted { "The values an export changes, read from the inverter through the bridge. Use this to check the register map against the inverter display." }
-                div #inverter {
-                    button.secondary hx-post="/export/inverter" hx-target="#inverter" hx-disabled-elt="this" { "Read inverter settings" }
-                }
+        section.card {
+            h2 { "Inverter settings" }
+            p.muted { "The values an export changes, read from the inverter through the bridge. Use this to check the register map against the inverter display." }
+            div #inverter {
+                button.secondary hx-post="/export/inverter" hx-target="#inverter" hx-disabled-elt="this" { "Read inverter settings" }
             }
-            section.card {
-                h2 { "Settings" }
-                @if let Some(e) = v.settings_error { p.error { (e) } }
-                form method="post" action="/settings" {
-                    label { "Max export power" span.suffix { input type="number" name="max_export_power_w" min="100" max="10000" step="100" value=(s.max_export_power_w) required; "W" } }
-                    p.muted.small { "Written to the inverter's max sell power (System settings) and time-of-use slot power during an export." }
-                    label { "Battery capacity" span.suffix { input type="number" name="battery_capacity_kwh" min="0.1" max="100" step="0.1" value=(s.battery_capacity_kwh) required; "kWh" } }
-                    label { "Lowest stop SOC" span.suffix { input type="number" name="min_soc" min="5" max="99" value=(s.min_soc) required; "%" } }
-                    label { "Home load while exporting" span.suffix { input type="number" name="home_load_w" min="0" max="20000" step="50" value=(s.home_load_w) required; "W" } }
-                    label { "Battery discharge efficiency" input type="number" name="discharge_efficiency" min="0.01" max="1" step="0.01" value=(s.discharge_efficiency) required; }
-                    label { "Export price factor" input type="number" name="export_price_factor" min="0.01" max="5" step="0.01" value=(s.export_price_factor) required; }
-                    p.muted.small { "Multiplies the RCE value of exported energy in projections and history (1 = plain RCE)." }
-                    button type="submit" { "Save settings" }
-                }
+        }
+        section.card {
+            h2 { "Settings" }
+            @if let Some(e) = v.settings_error { p.error { (e) } }
+            form.narrow method="post" action="/settings" {
+                label { "Max export power" span.suffix { input type="number" name="max_export_power_w" min="100" max="10000" step="100" value=(s.max_export_power_w) required; "W" } }
+                p.muted.small { "Written to the inverter's max sell power (System settings) and time-of-use slot power during an export." }
+                label { "Battery capacity" span.suffix { input type="number" name="battery_capacity_kwh" min="0.1" max="100" step="0.1" value=(s.battery_capacity_kwh) required; "kWh" } }
+                label { "Lowest stop SOC" span.suffix { input type="number" name="min_soc" min="5" max="99" value=(s.min_soc) required; "%" } }
+                label { "Home load while exporting" span.suffix { input type="number" name="home_load_w" min="0" max="20000" step="50" value=(s.home_load_w) required; "W" } }
+                label { "Battery discharge efficiency" input type="number" name="discharge_efficiency" min="0.01" max="1" step="0.01" value=(s.discharge_efficiency) required; }
+                label { "Export price factor" input type="number" name="export_price_factor" min="0.01" max="5" step="0.01" value=(s.export_price_factor) required; }
+                p.muted.small { "Multiplies the RCE value of exported energy in projections and history (1 = plain RCE)." }
+                button type="submit" { "Save settings" }
             }
         }
     };
